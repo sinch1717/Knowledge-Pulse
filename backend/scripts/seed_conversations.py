@@ -43,11 +43,12 @@ TOPIC_PROMPT = """Here are the section headings from a company's documentation s
 
 The company is: {label}
 
-List 16 things their customers would realistically contact support about. Cover the
+List 8 things their customers would realistically contact support about. Cover the
 obvious ones, but include at least four that the headings above do NOT appear to
 cover — real customers ask about things nobody documented.
 
-Return a JSON array of objects with these keys:
+Return a JSON object with a single key "topics".
+The value of "topics" must be an array of objects with these keys:
   "topic": short phrase
   "covered": true if the headings above look like they explain it, false if not
   "severity": "blocking" if it stops the customer working, "annoying", or "curious"
@@ -60,10 +61,10 @@ Company: {label}
 
 Write them the way real customers type: short, lowercase, sometimes no question mark,
 occasional typo, occasional missing context. Vary them properly — different words,
-different angles, different levels of frustration. Some should be one line. A few
-should ramble.
+different angles, different levels of frustration.
 
-Do not number them. Return a JSON array of strings.
+Return a JSON object with a single key "questions".
+The value of "questions" must be an array of strings.
 """
 
 
@@ -84,12 +85,18 @@ def load_corpus_headings(db, limit: int = 60) -> tuple[str, str]:
 
 
 def build_topic_frame(label: str, headings: str) -> list[dict]:
-    topics = llm.complete_json(
+    result = llm.complete_json(
         TOPIC_PROMPT.format(headings=headings, label=label),
         system="You know how support queues actually look. You are specific, never generic.",
         temperature=0.7,
-        max_tokens=1200,
+        max_tokens=1500,
     )
+
+    if isinstance(result, dict):
+        topics = result.get("topics", [])
+    else:
+        topics = result
+
     if not isinstance(topics, list):
         raise SystemExit(f"Expected a list of topics, got {type(topics)}")
     log.info("Topic frame: %d topics, %d of them uncovered",
@@ -141,16 +148,28 @@ def allocate(topics: list[dict], total: int, periods: list[str]) -> dict:
 
 
 def generate_questions(topic: str, label: str, n: int) -> list[str]:
+    import time
+
     try:
         result = llm.complete_json(
-            QUESTION_PROMPT.format(n=min(n, 25), topic=topic, label=label),
+            QUESTION_PROMPT.format(n=min(n, 5), topic=topic, label=label),
             system="You imitate real customer writing, including its messiness.",
-            temperature=0.95,
-            max_tokens=1400,
+            temperature=0.8,
+            max_tokens=900,
         )
-        return [str(q) for q in result if str(q).strip()] if isinstance(result, list) else []
+
+        time.sleep(4)
+
+        if isinstance(result, dict):
+            questions = result.get("questions", [])
+        else:
+            questions = result
+
+        return [str(q) for q in questions if str(q).strip()] if isinstance(questions, list) else []
+
     except llm.LLMError as exc:
         log.warning("Generation failed for '%s': %s", topic, exc)
+        time.sleep(4)
         return []
 
 

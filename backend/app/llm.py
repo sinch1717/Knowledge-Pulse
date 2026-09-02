@@ -25,27 +25,76 @@ class LLMError(RuntimeError):
     pass
 
 
-def _groq(system: str, user: str, temperature: float, max_tokens: int) -> str:
+# def _groq(system: str, user: str, temperature: float, max_tokens: int) -> str:
+#     if not settings.groq_api_key:
+#         raise LLMError("GROQ_API_KEY is not set")
+#     r = httpx.post(
+#         "https://api.groq.com/openai/v1/chat/completions",
+#         headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+#         json={
+#             "model": settings.groq_model,
+#             "messages": [
+#                 {"role": "system", "content": system},
+#                 {"role": "user", "content": user},
+#             ],
+#             "temperature": temperature,
+#             "max_tokens": max_tokens,
+#         },
+#         timeout=settings.llm_timeout_seconds,
+#     )
+#     if r.status_code != 200:
+#         raise LLMError(f"Groq returned {r.status_code}: {r.text[:300]}")
+#     return r.json()["choices"][0]["message"]["content"]
+
+def _groq(
+    system: str,
+    user: str,
+    temperature: float,
+    max_tokens: int,
+    json_mode: bool = False,
+) -> str:
     if not settings.groq_api_key:
         raise LLMError("GROQ_API_KEY is not set")
+
+    payload = {
+        "model": settings.groq_model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "reasoning_effort": "low",
+    }
+
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
     r = httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {settings.groq_api_key}"},
-        json={
-            "model": settings.groq_model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
+        json=payload,
         timeout=settings.llm_timeout_seconds,
     )
+
     if r.status_code != 200:
         raise LLMError(f"Groq returned {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"]
 
+    payload = r.json()
+
+    try:
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError) as exc:
+        raise LLMError(
+            f"Unexpected Groq response: {json.dumps(payload)[:500]}"
+        ) from exc
+
+    if not content:
+        raise LLMError(
+            f"Groq returned empty content. Response: {json.dumps(payload)[:500]}"
+        )
+
+    return content
 
 def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
     if not settings.gemini_api_key:
@@ -87,16 +136,60 @@ def complete(
     raise LLMError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
 
 
-def complete_json(user: str, system: str, temperature: float = 0.2, max_tokens: int = 900):
-    """Ask for JSON and parse it, tolerating the fenced-code-block habit."""
-    raw = complete(user, system + "\n\nReply with JSON only. No prose, no code fences.",
-                   temperature, max_tokens)
-    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+# def complete_json(user: str, system: str, temperature: float = 0.2, max_tokens: int = 900):
+#     """Ask for JSON and parse it, tolerating the fenced-code-block habit."""
+#     raw = complete(user, system + "\n\nReply with JSON only. No prose, no code fences.",
+#                    temperature, max_tokens)
+#     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+#     try:
+#         return json.loads(cleaned)
+#     except json.JSONDecodeError:
+#         # Last resort: pull the outermost brace or bracket pair.
+#         match = re.search(r"[\[{].*[\]}]", cleaned, re.DOTALL)
+#         if not match:
+#             raise LLMError(f"Model did not return JSON: {cleaned[:200]}")
+#         return json.loads(match.group(0))
+def complete_json(
+    user: str,
+    system: str,
+    temperature: float = 0.2,
+    max_tokens: int = 900,
+):
+    """Ask for JSON and parse it, tolerating fenced-code-block output."""
+
+    provider = settings.llm_provider.lower()
+
+    if provider == "groq":
+        raw = _groq(
+            system + "\n\nReply with valid JSON only.",
+            user,
+            temperature,
+            max_tokens,
+            json_mode=True,
+        ).strip()
+    else:
+        raw = complete(
+            user,
+            system + "\n\nReply with JSON only. No prose, no code fences.",
+            temperature,
+            max_tokens,
+        )
+
+    cleaned = re.sub(
+        r"^```(?:json)?|```$",
+        "",
+        raw.strip(),
+        flags=re.MULTILINE,
+    ).strip()
+
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        # Last resort: pull the outermost brace or bracket pair.
         match = re.search(r"[\[{].*[\]}]", cleaned, re.DOTALL)
+
         if not match:
-            raise LLMError(f"Model did not return JSON: {cleaned[:200]}")
+            raise LLMError(
+                f"Model did not return JSON: {cleaned[:200]}"
+            )
+
         return json.loads(match.group(0))
