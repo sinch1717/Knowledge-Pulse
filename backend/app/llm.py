@@ -1,0 +1,102 @@
+"""One interface, two providers.
+
+Groq during development because it is free and fast enough to iterate against;
+Gemini for the demo. Nothing outside this module knows which is in use.
+
+Both are called over plain HTTP rather than through vendor SDKs. Two reasons:
+the SDKs churn, and a fifty-line HTTP call is easier to reason about in a paper
+than a dependency whose behaviour changes between minor versions.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+import httpx
+
+from app.config import settings
+
+log = logging.getLogger(__name__)
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+def _groq(system: str, user: str, temperature: float, max_tokens: int) -> str:
+    if not settings.groq_api_key:
+        raise LLMError("GROQ_API_KEY is not set")
+    r = httpx.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+        json={
+            "model": settings.groq_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        },
+        timeout=settings.llm_timeout_seconds,
+    )
+    if r.status_code != 200:
+        raise LLMError(f"Groq returned {r.status_code}: {r.text[:300]}")
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
+    if not settings.gemini_api_key:
+        raise LLMError("GEMINI_API_KEY is not set")
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.gemini_model}:generateContent"
+    )
+    r = httpx.post(
+        url,
+        params={"key": settings.gemini_api_key},
+        json={
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+        },
+        timeout=settings.llm_timeout_seconds,
+    )
+    if r.status_code != 200:
+        raise LLMError(f"Gemini returned {r.status_code}: {r.text[:300]}")
+    payload = r.json()
+    try:
+        return payload["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as exc:
+        raise LLMError(f"Unexpected Gemini response: {json.dumps(payload)[:300]}") from exc
+
+
+def complete(
+    user: str,
+    system: str = "You are a careful assistant. Answer only from what you are given.",
+    temperature: float = 0.2,
+    max_tokens: int = 900,
+) -> str:
+    provider = settings.llm_provider.lower()
+    if provider == "groq":
+        return _groq(system, user, temperature, max_tokens).strip()
+    if provider == "gemini":
+        return _gemini(system, user, temperature, max_tokens).strip()
+    raise LLMError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
+
+
+def complete_json(user: str, system: str, temperature: float = 0.2, max_tokens: int = 900):
+    """Ask for JSON and parse it, tolerating the fenced-code-block habit."""
+    raw = complete(user, system + "\n\nReply with JSON only. No prose, no code fences.",
+                   temperature, max_tokens)
+    cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Last resort: pull the outermost brace or bracket pair.
+        match = re.search(r"[\[{].*[\]}]", cleaned, re.DOTALL)
+        if not match:
+            raise LLMError(f"Model did not return JSON: {cleaned[:200]}")
+        return json.loads(match.group(0))

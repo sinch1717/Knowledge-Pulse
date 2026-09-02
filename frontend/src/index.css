@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans text-base;
+    font-feature-settings: "cv05" 1, "ss01" 1;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display text-ink;
+    font-variation-settings: "SOFT" 0, "WONK" 0;
+  }
+
+  :focus-visible {
+    outline: 2px solid theme("colors.oxblood.DEFAULT");
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: theme("colors.oxblood.wash");
+  }
+}
+
+@layer components {
+  /* Ledger row: hairline-separated record, no card chrome. */
+  .ledger-row {
+    @apply relative border-b border-rule px-5 py-4 transition-colors duration-150;
+  }
+  .ledger-row:hover {
+    @apply bg-paper-raised;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

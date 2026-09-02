@@ -1,0 +1,13 @@
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Client-side routing: every path falls through to the SPA entry point.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
