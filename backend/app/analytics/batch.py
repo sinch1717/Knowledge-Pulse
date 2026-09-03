@@ -27,6 +27,7 @@ from app.models import (
     Recommendation,
     Report,
     TopicCluster,
+    OrgProfile,
 )
 
 log = logging.getLogger(__name__)
