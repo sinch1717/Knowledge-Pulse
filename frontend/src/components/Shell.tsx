@@ -1,7 +1,7 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
 import { api, usingMockData } from "@/lib/api";
-import { useEffect, useState } from "react";
 
 const nav = [
   { to: "/", label: "This period", end: true },
@@ -13,13 +13,26 @@ const nav = [
 ];
 
 export function Shell() {
+  const [orgName, setOrgName] = useState("KnowledgePulse");
+
+  useEffect(() => {
+    api
+      .getOrgProfile()
+      .then((profile) => setOrgName(profile.name))
+      .catch(() => {
+        // Keep the default branding if the backend is unavailable.
+      });
+  }, []);
+
   return (
     <div className="min-h-screen md:flex">
       <aside className="border-b border-rule bg-paper-sunk md:sticky md:top-0 md:h-screen md:w-60 md:shrink-0 md:border-b-0 md:border-r">
         <div className="flex items-baseline gap-2 px-6 pb-4 pt-6">
-          <span className="font-display text-h3 font-semibold tracking-tight">Knowledge</span>
-          <span className="font-display text-h3 text-oxblood">Pulse</span>
+          <span className="font-display text-h3 font-semibold tracking-tight">
+            {orgName}
+          </span>
         </div>
+
         <p className="max-w-[15rem] px-6 pb-6 text-small text-ink-faint">
           Reads the support archive and ranks what customers are stuck on.
         </p>
