@@ -51,15 +51,16 @@ export type OrgProfile = {
   industry: string;
   voice_description: string;
 };
-getOrgProfile: () =>
+
+
+export const api = {
+  getOrgProfile: () =>
   get<OrgProfile>("/api/org-profile", {
     name: "KnowledgePulse",
     description: "Reads the support archive and ranks what customers are stuck on.",
     industry: "",
     voice_description: "Professional, concise, friendly and helpful.",
   }),
-
-export const api = {
   getOverview: () => get<Overview>("/api/overview", mockOverview),
 
   getSources: () => get<Source[]>("/api/sources", mockSources),
