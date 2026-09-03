@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import create_tables
-from app.routers import chat, insights, sources
+from app.routers import chat, insights, sources,org_profile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,6 +48,7 @@ app.add_middleware(
 app.include_router(sources.router)
 app.include_router(chat.router)
 app.include_router(insights.router)
+app.include_router(org_profile.router)
 
 
 @app.get("/api/health")
