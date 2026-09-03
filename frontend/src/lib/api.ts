@@ -45,6 +45,19 @@ async function get<T>(path: string, fallback: T): Promise<T> {
   }
   return (await res.json()) as T;
 }
+export type OrgProfile = {
+  name: string;
+  description: string;
+  industry: string;
+  voice_description: string;
+};
+getOrgProfile: () =>
+  get<OrgProfile>("/api/org-profile", {
+    name: "KnowledgePulse",
+    description: "Reads the support archive and ranks what customers are stuck on.",
+    industry: "",
+    voice_description: "Professional, concise, friendly and helpful.",
+  }),
 
 export const api = {
   getOverview: () => get<Overview>("/api/overview", mockOverview),
