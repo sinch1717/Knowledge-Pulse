@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
-import { usingMockData } from "@/lib/api";
+import { api, usingMockData } from "@/lib/api";
+import { useEffect, useState } from "react";
 
 const nav = [
   { to: "/", label: "This period", end: true },
