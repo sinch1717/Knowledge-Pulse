@@ -3,14 +3,12 @@
 Category assignment is rule-based, and deliberately so. The rules encode a single
 piece of reasoning: what the combination of volume and retrieval confidence tells
 you about *where* the problem lives.
-
   Low confidence  → retrieval found nothing close. The corpus is missing this.
                     That is a documentation problem.
   High confidence, high volume, still asked constantly → the docs cover it and
                     people keep asking anyway. Either it is buried, in which case
                     it belongs in the FAQ, or the product itself is confusing.
   Unresolved individual conversations → a person, not a pattern. Reply to them.
-
 The prose for each recommendation is written by the model, but what category it
 lands in is decided by the rules, so a reviewer can always ask why and get an
 answer that does not begin "the model decided".
@@ -23,9 +21,18 @@ import uuid
 
 from app import llm
 from app.config import settings
-from app.models import Recommendation, TopicCluster
+from app.models import OrgProfile, Recommendation, TopicCluster
 
 log = logging.getLogger(__name__)
+
+
+def org_context(profile: OrgProfile) -> str:
+    return f"""Organisation: {profile.name}
+Description: {profile.description}
+Industry: {profile.industry}
+Communication style: {profile.voice_description}
+"""
+
 
 CATEGORY_BRIEF = {
     "documentation": (
@@ -53,7 +60,6 @@ def new_id(prefix: str) -> str:
 
 def choose_category(cluster: TopicCluster, median_volume: float) -> str:
     low_confidence = cluster.mean_confidence < settings.low_confidence_threshold
-
     if low_confidence and cluster.severity >= 0.65 and cluster.trend == "emerging":
         # Nothing in the corpus and it is blocking people and it is growing.
         # Writing a page will not fix a product that gives no feedback.
@@ -68,10 +74,17 @@ def choose_category(cluster: TopicCluster, median_volume: float) -> str:
 
 
 def write_recommendation(
-    cluster: TopicCluster, category: str, samples: list[str], report_id: str
+    cluster: TopicCluster,
+    category: str,
+    samples: list[str],
+    report_id: str,
+    profile: OrgProfile,
 ) -> Recommendation:
     brief = CATEGORY_BRIEF[category]
-    prompt = f"""Topic: {cluster.name}
+
+    prompt = f"""{org_context(profile)}
+
+Topic: {cluster.name}
 Questions asked: {cluster.query_count} this period, {cluster.previous_query_count} last period
 Retrieval confidence: {cluster.mean_confidence:.2f} out of 1.0
 Trend: {cluster.trend}
@@ -80,12 +93,11 @@ What customers actually said:
 {chr(10).join('- ' + s for s in samples[:8])}
 
 {brief}
-
 Return JSON with exactly these keys:
   "headline": one imperative sentence, under twelve words
   "body": two to four sentences of plain explanation, no jargon, addressed to whoever owns the product
   "expected_effect": one sentence on what changes if they do it
-{'  "faq_answer": the answer to publish, two to four sentences' if category == 'faq' else ''}"""
+  {'  "faq_answer": the answer to publish, two to four sentences' if category == 'faq' else ''}"""
 
     defaults = {
         "headline": f"Look into: {cluster.name}",
@@ -101,14 +113,18 @@ Return JSON with exactly these keys:
         result = llm.complete_json(
             prompt,
             system=(
-                "You advise a small product team. You write plainly, name specific actions, "
-                "and never pad. You are given real customer questions; stay grounded in them."
+                f"You advise the team at {profile.name}. "
+                f"Write according to this communication style: {profile.voice_description} "
+                "Name specific actions and never pad. "
+                "You are given real customer questions; stay grounded in them."
             ),
             temperature=0.4,
             max_tokens=500,
         )
+
         if not isinstance(result, dict):
             raise llm.LLMError("expected an object")
+
     except llm.LLMError as exc:
         log.warning("Falling back to templated recommendation for %s: %s", cluster.name, exc)
         result = {}
@@ -124,21 +140,33 @@ Return JSON with exactly these keys:
         headline=str(merged["headline"])[:300],
         body=str(merged["body"]),
         expected_effect=str(merged["expected_effect"]),
-        faq_answer=str(merged["faq_answer"]) if category == "faq" and merged.get("faq_answer") else None,
+        faq_answer=(
+            str(merged["faq_answer"])
+            if category == "faq" and merged.get("faq_answer")
+            else None
+        ),
         supporting_queries=samples[:5],
         volume=cluster.query_count,
         growth=cluster.growth,
     )
 
 
-def write_summary(period: str, clusters: list[TopicCluster], unanswered_rate: float) -> str:
+def write_summary(
+    period: str,
+    clusters: list[TopicCluster],
+    unanswered_rate: float,
+    profile: OrgProfile,
+) -> str:
     """The paragraph at the top of the report. The only place prose is allowed to roam."""
+
     lines = [
         f"- {c.name}: {c.query_count} questions ({c.previous_query_count} last period), "
         f"confidence {c.mean_confidence:.2f}, {c.trend}"
         for c in clusters[:8]
     ]
+
     prompt = (
+        f"{org_context(profile)}\n"
         f"Reporting period: {period}\n"
         f"Share of questions answered poorly: {unanswered_rate:.0%}\n\n"
         f"Top topics by priority:\n" + "\n".join(lines) + "\n\n"
@@ -146,18 +174,29 @@ def write_summary(period: str, clusters: list[TopicCluster], unanswered_rate: fl
         "who runs this product. Lead with whatever actually changed this period. Mention which "
         "problems are long-running. Do not list every topic and do not use bullet points."
     )
+
     try:
         return llm.complete(
             prompt,
-            system="You write short, direct summaries for busy non-technical readers.",
+            system=(
+                f"You write short, direct summaries for {profile.name}. "
+                f"Use this communication style: {profile.voice_description}"
+            ),
             temperature=0.4,
             max_tokens=350,
         )
+
     except llm.LLMError as exc:
         log.warning("Summary unavailable: %s", exc)
+
         emerging = [c.name for c in clusters if c.trend == "emerging"][:3]
-        parts = [f"{len(clusters)} topics were identified in {period}, and {unanswered_rate:.0%} of "
-                 f"questions were answered with low retrieval confidence."]
+
+        parts = [
+            f"{len(clusters)} topics were identified in {period}, and {unanswered_rate:.0%} of "
+            f"questions were answered with low retrieval confidence."
+        ]
+
         if emerging:
             parts.append("Newly rising: " + "; ".join(emerging) + ".")
+
         return " ".join(parts)
