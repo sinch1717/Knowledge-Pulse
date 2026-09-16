@@ -76,20 +76,20 @@ numbers, IDs and anything the user might compare column-wise. Mono never appears
 
 Modules follow Section 7.2.5 of the report:
 
-| Module | Job |
-|---|---|
-| `source_manager` | Registers sources, computes content hashes, decides when to re-index |
-| `crawler` | Follows internal links from an entry point within a depth and domain boundary |
-| `ingest_pipeline` | Parses, cleans, chunks at heading boundaries, embeds |
-| `vector_gateway` | Thin wrapper over the vector store: upsert, delete, top-k search |
-| `rag_engine` | Embeds the question, retrieves, scores confidence, builds the prompt, returns citations |
-| `conversation_store` | Persists turns with confidence and retrieved chunk IDs |
-| `analytics_batch` | Selects the window, embeds, reduces, clusters, labels |
-| `trend_tracker` | Matches topics across periods, classifies recurring / emerging / stable |
-| `insight_prioritiser` | Scores and ranks, links each insight to its member questions |
-| `recommendation_engine` | Assigns insights to one of four action categories |
-| `report_builder` | Assembles the periodic client report with evidence |
-| `evaluation_harness` | Runs the held-out set, records faithfulness and relevance |
+| Module                    | Job                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `source_manager`        | Registers sources, computes content hashes, decides when to re-index                    |
+| `crawler`               | Follows internal links from an entry point within a depth and domain boundary           |
+| `ingest_pipeline`       | Parses, cleans, chunks at heading boundaries, embeds                                    |
+| `vector_gateway`        | Thin wrapper over the vector store: upsert, delete, top-k search                        |
+| `rag_engine`            | Embeds the question, retrieves, scores confidence, builds the prompt, returns citations |
+| `conversation_store`    | Persists turns with confidence and retrieved chunk IDs                                  |
+| `analytics_batch`       | Selects the window, embeds, reduces, clusters, labels                                   |
+| `trend_tracker`         | Matches topics across periods, classifies recurring / emerging / stable                 |
+| `insight_prioritiser`   | Scores and ranks, links each insight to its member questions                            |
+| `recommendation_engine` | Assigns insights to one of four action categories                                       |
+| `report_builder`        | Assembles the periodic client report with evidence                                      |
+| `evaluation_harness`    | Runs the held-out set, records faithfulness and relevance                               |
 
 ### Decisions already made
 
