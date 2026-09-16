@@ -32,13 +32,17 @@ def _set_status(db: Session, source: Source, status: str, error: str | None = No
     db.commit()
 
 
-def ingest_source(source_id: str) -> None:
+def ingest_source(source_id: str, organization_id: str) -> None:
     """Full pipeline for one source. Safe to call in a thread."""
     db = SessionLocal()
     try:
-        source = db.get(Source, source_id)
+        source = (
+            db.query(Source)
+            .filter(Source.id == source_id, Source.organization_id == organization_id)
+            .one_or_none()
+        )
         if source is None:
-            log.error("No source %s", source_id)
+            log.error("No source %s for organization %s", source_id, organization_id)
             return
 
         try:
@@ -47,7 +51,7 @@ def ingest_source(source_id: str) -> None:
             else:
                 raw_chunks, page_count = _from_file(source)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user, not swallowed
-            log.exception("Ingestion failed for %s", source_id)
+            log.exception("Ingestion failed for %s (organization %s)", source_id, organization_id)
             _set_status(db, source, "failed", str(exc)[:500])
             return
 
@@ -64,8 +68,10 @@ def ingest_source(source_id: str) -> None:
         _set_status(db, source, "indexing")
 
         # Replace rather than append, so re-indexing does not duplicate content.
-        db.query(Chunk).filter(Chunk.source_id == source.id).delete()
-        vector_store.delete_source(source.id)
+        db.query(Chunk).filter(
+            Chunk.source_id == source.id, Chunk.organization_id == organization_id
+        ).delete()
+        vector_store.delete_source(source.id, organization_id)
         db.commit()
 
         texts = [c.text for c in raw_chunks]
@@ -77,6 +83,7 @@ def ingest_source(source_id: str) -> None:
             ids.append(chunk_id)
             metadatas.append(
                 {
+                    "organization_id": organization_id,
                     "source_id": source.id,
                     "source_label": source.label,
                     "heading_path": raw.heading_path,
@@ -86,6 +93,7 @@ def ingest_source(source_id: str) -> None:
             db.add(
                 Chunk(
                     id=chunk_id,
+                    organization_id=organization_id,
                     source_id=source.id,
                     heading_path=raw.heading_path,
                     url=raw.url,
@@ -94,7 +102,7 @@ def ingest_source(source_id: str) -> None:
                 )
             )
 
-        vector_store.upsert(ids, vectors, metadatas, texts)
+        vector_store.upsert(ids, vectors, metadatas, texts, organization_id=organization_id)
 
         source.page_count = page_count
         source.chunk_count = len(ids)
@@ -103,7 +111,13 @@ def ingest_source(source_id: str) -> None:
         source.status = "ready"
         source.error = None
         db.commit()
-        log.info("Indexed %s: %d pages, %d chunks", source.label, page_count, len(ids))
+        log.info(
+            "Indexed %s (org %s): %d pages, %d chunks",
+            source.label,
+            organization_id,
+            page_count,
+            len(ids),
+        )
     finally:
         db.close()
 
@@ -111,7 +125,11 @@ def ingest_source(source_id: str) -> None:
 def _from_website(source: Source) -> tuple[list[chunker.RawChunk], int]:
     db = SessionLocal()
     try:
-        live = db.get(Source, source.id)
+        live = (
+            db.query(Source)
+            .filter(Source.id == source.id, Source.organization_id == source.organization_id)
+            .one_or_none()
+        )
         if live:
             live.status = "crawling"
             db.commit()

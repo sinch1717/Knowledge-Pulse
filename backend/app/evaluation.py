@@ -82,12 +82,12 @@ def load_question_set(path: str) -> list[str]:
     return [item["question"] if isinstance(item, dict) else str(item) for item in payload]
 
 
-def run_evaluation(db: Session, questions: list[str]) -> EvaluationRun:
+def run_evaluation(db: Session, questions: list[str], organization_id: str) -> EvaluationRun:
     scores = {"faithfulness": [], "answer_relevance": [], "context_relevance": []}
     failures: list[dict] = []
 
     for n, question in enumerate(questions, start=1):
-        hits, _ = engine.retrieve_only(question)
+        hits, _ = engine.retrieve_only(question, organization_id=organization_id)
         context = "\n\n".join(h["text"] for h in hits) or "(nothing retrieved)"
         try:
             answer = llm.complete(engine.build_prompt(question, hits), system=engine.SYSTEM_PROMPT)
@@ -106,7 +106,7 @@ def run_evaluation(db: Session, questions: list[str]) -> EvaluationRun:
                 failures.append({"question": question, "metric": metric, "score": round(value, 2)})
 
         if n % 10 == 0:
-            log.info("Evaluated %d/%d", n, len(questions))
+            log.info("Evaluated %d/%d (org %s)", n, len(questions), organization_id)
 
     def mean(values: list[float]) -> float:
         return round(sum(values) / len(values), 4) if values else 0.0
@@ -115,6 +115,7 @@ def run_evaluation(db: Session, questions: list[str]) -> EvaluationRun:
 
     run = EvaluationRun(
         id=f"eval_{uuid.uuid4().hex[:10]}",
+        organization_id=organization_id,
         ran_at=datetime.now(timezone.utc),
         question_count=len(scores["faithfulness"]),
         faithfulness=mean(scores["faithfulness"]),

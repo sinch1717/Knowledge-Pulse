@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import llm  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.db import SessionLocal, create_tables  # noqa: E402
 from app.models import Chunk  # noqa: E402
 
@@ -38,15 +39,24 @@ two strings."""
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--organization-id",
+        default=settings.default_organization_id,
+        help=f"Organization tenant identifier (default: {settings.default_organization_id})",
+    )
     parser.add_argument("--count", type=int, default=50)
     args = parser.parse_args()
 
     create_tables()
     db = SessionLocal()
     try:
-        chunks = db.query(Chunk).filter(Chunk.word_count > 60).all()
+        chunks = (
+            db.query(Chunk)
+            .filter(Chunk.word_count > 60, Chunk.organization_id == args.organization_id)
+            .all()
+        )
         if not chunks:
-            raise SystemExit("Nothing indexed. Add a source first.")
+            raise SystemExit(f"Nothing indexed for organization '{args.organization_id}'. Add a source first.")
 
         random.seed(7)
         random.shuffle(chunks)

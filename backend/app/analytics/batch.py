@@ -41,20 +41,29 @@ def previous_period(period: str) -> str:
     return f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
 
 
-def run_batch(db: Session, period: str) -> Report | None:
-    log.info("Analytics batch starting for %s", period)
+def run_batch(db: Session, period: str, organization_id: str) -> Report | None:
+    log.info("Analytics batch starting for %s (organization %s)", period, organization_id)
 
     questions = (
         db.query(Message)
-        .filter(Message.role == "customer", Message.period == period)
+        .filter(
+            Message.role == "customer",
+            Message.period == period,
+            Message.organization_id == organization_id,
+        )
         .order_by(Message.created_at)
         .all()
     )
     if len(questions) < settings.hdbscan_min_cluster_size * 2:
-        log.warning("Only %d questions in %s; nothing to analyse", len(questions), period)
+        log.warning(
+            "Only %d questions in %s for org %s; nothing to analyse",
+            len(questions),
+            period,
+            organization_id,
+        )
         return None
 
-    _clear_period(db, period)
+    _clear_period(db, period, organization_id)
 
     texts = [q.text for q in questions]
     confidences = [q.confidence if q.confidence is not None else 0.0 for q in questions]
@@ -64,11 +73,16 @@ def run_batch(db: Session, period: str) -> Report | None:
 
     clusters = clustering.cluster_queries(texts, vectors, confidences)
     if not clusters:
-        log.warning("No topics emerged for %s", period)
+        log.warning("No topics emerged for %s (organization %s)", period, organization_id)
         return None
 
     prior = (
-        db.query(TopicCluster).filter(TopicCluster.period == previous_period(period)).all()
+        db.query(TopicCluster)
+        .filter(
+            TopicCluster.period == previous_period(period),
+            TopicCluster.organization_id == organization_id,
+        )
+        .all()
     )
     max_volume = max(len(c.indices) for c in clusters)
 
@@ -81,6 +95,7 @@ def run_batch(db: Session, period: str) -> Report | None:
 
         row = TopicCluster(
             id=new_id("ins"),
+            organization_id=organization_id,
             period=period,
             name=cluster.name,
             keywords=cluster.keywords,
@@ -102,7 +117,13 @@ def run_batch(db: Session, period: str) -> Report | None:
         db.add(row)
         db.flush()
         for index in cluster.indices:
-            db.add(ClusterMember(cluster_id=row.id, message_id=questions[index].id))
+            db.add(
+                ClusterMember(
+                    organization_id=organization_id,
+                    cluster_id=row.id,
+                    message_id=questions[index].id,
+                )
+            )
         rows.append(row)
 
     rows.sort(key=lambda r: -r.priority)
@@ -110,35 +131,54 @@ def run_batch(db: Session, period: str) -> Report | None:
         row.rank = position
     db.commit()
 
-    report = _build_report(db, period, rows, questions)
-    log.info("Batch complete: %d topics, %d recommendations", len(rows), len(report.recommendations))
+    report = _build_report(db, period, rows, questions, organization_id)
+    log.info(
+        "Batch complete for %s (org %s): %d topics, %d recommendations",
+        period,
+        organization_id,
+        len(rows),
+        len(report.recommendations),
+    )
     return report
 
 
-def _clear_period(db: Session, period: str) -> None:
-    old_clusters = db.query(TopicCluster).filter(TopicCluster.period == period).all()
+def _clear_period(db: Session, period: str, organization_id: str) -> None:
+    old_clusters = (
+        db.query(TopicCluster)
+        .filter(TopicCluster.period == period, TopicCluster.organization_id == organization_id)
+        .all()
+    )
     for cluster in old_clusters:
         db.delete(cluster)
-    for old_report in db.query(Report).filter(Report.period == period).all():
+    for old_report in (
+        db.query(Report)
+        .filter(Report.period == period, Report.organization_id == organization_id)
+        .all()
+    ):
         db.delete(old_report)
     db.commit()
 
 
 def _build_report(
-    db: Session, period: str, rows: list[TopicCluster], questions: list[Message]
+    db: Session,
+    period: str,
+    rows: list[TopicCluster],
+    questions: list[Message],
+    organization_id: str,
 ) -> Report:
     low = sum(1 for q in questions if (q.confidence or 0) < settings.low_confidence_threshold)
     unanswered_rate = round(low / len(questions), 4)
 
     conversation_count = (
         db.query(func.count(func.distinct(Message.conversation_id)))
-        .filter(Message.period == period)
+        .filter(Message.period == period, Message.organization_id == organization_id)
         .scalar()
         or 0
     )
 
     report = Report(
         id=new_id("rep"),
+        organization_id=organization_id,
         period=period,
         generated_at=datetime.now(timezone.utc),
         conversation_count=conversation_count,
@@ -153,12 +193,16 @@ def _build_report(
     # eighteen actions on it is a report nobody acts on.
     top = rows[:6]
     volumes = sorted(r.query_count for r in rows)
-    median_volume = volumes[len(volumes) // 2]
+    median_volume = volumes[len(volumes) // 2] if volumes else 0
 
     for row in top:
         samples = _sample_questions(db, row.id, limit=8)
         category = recommend.choose_category(row, median_volume)
-        db.add(recommend.write_recommendation(row, category, samples, report.id))
+        db.add(
+            recommend.write_recommendation(
+                row, category, samples, report.id, organization_id=organization_id
+            )
+        )
 
     db.commit()
     db.refresh(report)
@@ -178,22 +222,28 @@ def _sample_questions(db: Session, cluster_id: str, limit: int = 5) -> list[str]
     return [r[0] for r in result]
 
 
-def latest_period(db: Session) -> str | None:
-    row = db.query(func.max(Message.period)).scalar()
+def latest_period(db: Session, organization_id: str | None = None) -> str | None:
+    query = db.query(func.max(Message.period)).filter(Message.role == "customer")
+    if organization_id:
+        query = query.filter(Message.organization_id == organization_id)
+    row = query.scalar()
     return row or None
 
 
-def run_for_all_periods(db: Session) -> list[Report]:
+def run_for_all_periods(db: Session, organization_id: str) -> list[Report]:
     """Used after seeding, when several months arrive at once. Order matters —
     each period needs the previous one already clustered to compute growth."""
     periods = [
         p[0]
-        for p in db.query(Message.period).filter(Message.role == "customer").distinct().order_by(Message.period)
+        for p in db.query(Message.period)
+        .filter(Message.role == "customer", Message.organization_id == organization_id)
+        .distinct()
+        .order_by(Message.period)
         if p[0]
     ]
     reports = []
     for period in periods:
-        report = run_batch(db, period)
+        report = run_batch(db, period, organization_id=organization_id)
         if report:
             reports.append(report)
     return reports

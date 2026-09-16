@@ -40,26 +40,60 @@ grow across periods is correctly flagged as emerging.
 If this passes, the plumbing is sound and anything that goes wrong afterwards is a
 data or model problem rather than a code one.
 
+## Multi-Tenancy & Tenant Header
+
+All business API endpoints are scoped by organization and require the `X-Organization-Id` header:
+
+```http
+X-Organization-Id: <organization_id>
+```
+
+Requests without this header are rejected with HTTP 400. For local development, tests, and scripts, use the default organization ID `org_default`.
+
+### Database Migration
+
+If upgrading an existing database, run the idempotent multi-tenancy migration:
+
+```bash
+python scripts/migrate_multitenancy.py
+```
+
 ## Run it for real
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-http://localhost:8000/api/health should report `"status": "ok"`. Interactive API
-docs are at http://localhost:8000/docs.
+http://localhost:8000/api/health should report `"status": "ok"` (health is public and does not require the tenant header). Interactive API docs are at http://localhost:8000/docs.
 
 Then, in order:
 
 **1. Index a source.** Either through the frontend's Sources screen, or:
 
 ```bash
-curl -X POST localhost:8000/api/sources \
+curl -X POST http://localhost:8000/api/sources \
   -H 'Content-Type: application/json' \
+  -H 'X-Organization-Id: org_default' \
   -d '{"kind":"website","location":"https://docs.example.com"}'
 ```
 
-Crawling runs in the background. Watch `GET /api/sources` until status reads
+List sources:
+
+```bash
+curl http://localhost:8000/api/sources \
+  -H 'X-Organization-Id: org_default'
+```
+
+Chat query:
+
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -H 'X-Organization-Id: org_default' \
+  -d '{"question":"How do I reset my password?","session_id":"sess_1"}'
+```
+
+Crawling runs in the background. Watch `GET /api/sources` (with `X-Organization-Id`) until status reads
 `ready`. A hundred pages takes two or three minutes, most of it the polite delay
 between requests.
 
@@ -103,21 +137,22 @@ VITE_API_BASE_URL=http://localhost:8000
 
 ## Endpoints
 
-| Method | Path | |
-|---|---|---|
-| GET | `/api/health` | Status and indexed chunk count |
-| GET | `/api/overview` | Current period summary |
-| GET | `/api/sources` | Registered sources |
-| POST | `/api/sources` | Register a website, starts crawling |
-| POST | `/api/sources/upload` | Upload a PDF, DOCX, TXT or MD |
-| POST | `/api/sources/{id}/reindex` | Re-crawl and re-embed |
-| DELETE | `/api/sources/{id}` | Remove a source and its vectors |
-| POST | `/api/chat` | Ask a question. Logs the turn. |
-| GET | `/api/insights` | Ranked topics for the current period |
-| GET | `/api/insights/{id}` | One topic with its evidence |
-| GET | `/api/reports/latest` | Most recent client report |
-| POST | `/api/analytics/run` | Trigger the batch |
-| GET | `/api/evaluation/latest` | Most recent evaluation run |
+| Method | Path | Tenant Header (`X-Organization-Id`) | Description |
+|---|---|---|---|
+| GET | `/api/health` | Optional (Public) | Infrastructure status and indexed chunk count |
+| GET | `/api/overview` | **Required** | Current period summary for organization |
+| GET | `/api/sources` | **Required** | Registered sources for organization |
+| POST | `/api/sources` | **Required** | Register website under organization, starts crawling |
+| POST | `/api/sources/upload` | **Required** | Upload file under organization |
+| POST | `/api/sources/{id}/reindex` | **Required** | Re-crawl and re-embed organization source |
+| DELETE | `/api/sources/{id}` | **Required** | Remove organization source and its vectors |
+| POST | `/api/chat` | **Required** | Organization-scoped RAG question & conversation log |
+| GET | `/api/insights` | **Required** | Ranked topics for organization in period |
+| GET | `/api/insights/{id}` | **Required** | One organization topic with evidence |
+| GET | `/api/reports/latest` | **Required** | Latest client report for organization |
+| GET | `/api/reports` | **Required** | List client reports for organization |
+| POST | `/api/analytics/run` | **Required** | Trigger batch analytics for organization |
+| GET | `/api/evaluation/latest` | **Required** | Most recent evaluation run for organization |
 
 ## Layout
 

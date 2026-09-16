@@ -46,36 +46,57 @@ def _get_collection():
     return _collection
 
 
-def upsert(chunk_ids: list[str], vectors, metadatas: list[dict], documents: list[str]) -> None:
+def upsert(
+    chunk_ids: list[str],
+    vectors,
+    metadatas: list[dict],
+    documents: list[str],
+    organization_id: str,
+) -> None:
     if not chunk_ids:
         return
+    enriched_metadatas = []
+    for m in metadatas:
+        meta_copy = dict(m)
+        meta_copy["organization_id"] = organization_id
+        enriched_metadatas.append(meta_copy)
     _get_collection().upsert(
         ids=chunk_ids,
         embeddings=[v.tolist() for v in vectors],
-        metadatas=metadatas,
+        metadatas=enriched_metadatas,
         documents=documents,
     )
 
 
-def delete_source(source_id: str) -> None:
-    _get_collection().delete(where={"source_id": source_id})
+def delete_source(source_id: str, organization_id: str) -> None:
+    _get_collection().delete(
+        where={
+            "$and": [
+                {"source_id": {"$eq": source_id}},
+                {"organization_id": {"$eq": organization_id}},
+            ]
+        }
+    )
 
 
 def count() -> int:
     return _get_collection().count()
 
 
-def search(vector, top_k: int) -> list[dict]:
-    """Return the top-k chunks with cosine similarity in [0, 1], best first."""
+def search(vector, top_k: int, organization_id: str) -> list[dict]:
+    """Return the top-k chunks with cosine similarity in [0, 1] for the given organization, best first."""
     collection = _get_collection()
     if collection.count() == 0:
         return []
     res = collection.query(
         query_embeddings=[vector.tolist()],
         n_results=min(top_k, collection.count()),
+        where={"organization_id": organization_id},
         include=["documents", "metadatas", "distances"],
     )
     hits = []
+    if not res.get("ids") or not res["ids"][0]:
+        return []
     for cid, doc, meta, dist in zip(
         res["ids"][0], res["documents"][0], res["metadatas"][0], res["distances"][0]
     ):
@@ -83,3 +104,4 @@ def search(vector, top_k: int) -> list[dict]:
         similarity = max(0.0, min(1.0, 1.0 - float(dist)))
         hits.append({"chunk_id": cid, "text": doc, "meta": meta or {}, "similarity": similarity})
     return hits
+

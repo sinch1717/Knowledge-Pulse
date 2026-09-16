@@ -76,6 +76,7 @@ def answer(
     db: Session,
     question: str,
     session_id: str,
+    organization_id: str,
     synthetic: bool = False,
     created_at: datetime | None = None,
 ) -> Message:
@@ -84,18 +85,27 @@ def answer(
     period = current_period(created_at)
 
     conversation = (
-        db.query(Conversation).filter(Conversation.session_id == session_id).one_or_none()
+        db.query(Conversation)
+        .filter(
+            Conversation.session_id == session_id,
+            Conversation.organization_id == organization_id,
+        )
+        .one_or_none()
     )
     if conversation is None:
         conversation = Conversation(
-            id=new_id("conv"), session_id=session_id, started_at=created_at, synthetic=synthetic
+            id=new_id("conv"),
+            organization_id=organization_id,
+            session_id=session_id,
+            started_at=created_at,
+            synthetic=synthetic,
         )
         db.add(conversation)
         db.flush()
 
     # --- retrieve -------------------------------------------------------
     query_vector = embeddings.embed_one(question)
-    hits = vector_store.search(query_vector, settings.retrieval_top_k)
+    hits = vector_store.search(query_vector, settings.retrieval_top_k, organization_id=organization_id)
     similarities = [h["similarity"] for h in hits]
     confidence = compute_confidence(similarities)
 
@@ -103,6 +113,7 @@ def answer(
     db.add(
         Message(
             id=new_id("msg"),
+            organization_id=organization_id,
             conversation_id=conversation.id,
             role="customer",
             text=question,
@@ -133,6 +144,7 @@ def answer(
 
     assistant = Message(
         id=new_id("msg"),
+        organization_id=organization_id,
         conversation_id=conversation.id,
         role="assistant",
         text=text,
@@ -158,7 +170,9 @@ def answer(
     return assistant
 
 
-def retrieve_only(question: str) -> tuple[list[dict], float]:
+def retrieve_only(question: str, organization_id: str) -> tuple[list[dict], float]:
     """Used by the evaluation harness, which needs context without logging a turn."""
-    hits = vector_store.search(embeddings.embed_one(question), settings.retrieval_top_k)
+    hits = vector_store.search(
+        embeddings.embed_one(question), settings.retrieval_top_k, organization_id=organization_id
+    )
     return hits, compute_confidence([h["similarity"] for h in hits])

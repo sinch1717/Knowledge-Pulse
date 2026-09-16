@@ -13,6 +13,7 @@ from app.db import get_db
 from app.ingest.pipeline import ingest_source
 from app.models import Source
 from app.schemas import SourceCreate, SourceOut
+from app.tenant import get_organization_id, get_source_for_organization
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -35,13 +36,26 @@ def _out(s: Source) -> SourceOut:
 
 
 @router.get("", response_model=list[SourceOut])
-def list_sources(db: Session = Depends(get_db)):
-    rows = db.query(Source).order_by(Source.created_at.desc()).all()
+def list_sources(
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_organization_id),
+):
+    rows = (
+        db.query(Source)
+        .filter(Source.organization_id == org_id)
+        .order_by(Source.created_at.desc())
+        .all()
+    )
     return [_out(s) for s in rows]
 
 
 @router.post("", response_model=SourceOut, status_code=201)
-def create_source(payload: SourceCreate, tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def create_source(
+    payload: SourceCreate,
+    tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_organization_id),
+):
     if payload.kind == "website" and not payload.location.startswith(("http://", "https://")):
         raise HTTPException(400, "A website source needs a full URL starting with http:// or https://")
 
@@ -50,6 +64,7 @@ def create_source(payload: SourceCreate, tasks: BackgroundTasks, db: Session = D
     )
     source = Source(
         id=f"src_{uuid.uuid4().hex[:10]}",
+        organization_id=org_id,
         kind=payload.kind,
         label=label,
         location=payload.location,
@@ -58,13 +73,16 @@ def create_source(payload: SourceCreate, tasks: BackgroundTasks, db: Session = D
     db.add(source)
     db.commit()
 
-    tasks.add_task(ingest_source, source.id)
+    tasks.add_task(ingest_source, source.id, org_id)
     return _out(source)
 
 
 @router.post("/upload", response_model=SourceOut, status_code=201)
 async def upload_source(
-    tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db)
+    tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_organization_id),
 ):
     extension = os.path.splitext(file.filename or "")[1].lower()
     if extension not in EXTENSION_KIND:
@@ -78,6 +96,7 @@ async def upload_source(
 
     source = Source(
         id=source_id,
+        organization_id=org_id,
         kind=EXTENSION_KIND[extension],
         label=file.filename or destination,
         location=destination,
@@ -86,29 +105,38 @@ async def upload_source(
     db.add(source)
     db.commit()
 
-    tasks.add_task(ingest_source, source.id)
+    tasks.add_task(ingest_source, source.id, org_id)
     return _out(source)
 
 
 @router.post("/{source_id}/reindex", response_model=SourceOut)
-def reindex(source_id: str, tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    source = db.get(Source, source_id)
+def reindex(
+    source_id: str,
+    tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_organization_id),
+):
+    source = get_source_for_organization(db, source_id, org_id)
     if source is None:
         raise HTTPException(404, "No source with that id")
     source.status = "queued"
     source.error = None
     db.commit()
-    tasks.add_task(ingest_source, source.id)
+    tasks.add_task(ingest_source, source.id, org_id)
     return _out(source)
 
 
 @router.delete("/{source_id}", status_code=204)
-def delete_source(source_id: str, db: Session = Depends(get_db)):
+def delete_source(
+    source_id: str,
+    db: Session = Depends(get_db),
+    org_id: str = Depends(get_organization_id),
+):
     from app import vector_store
 
-    source = db.get(Source, source_id)
+    source = get_source_for_organization(db, source_id, org_id)
     if source is None:
         raise HTTPException(404, "No source with that id")
-    vector_store.delete_source(source_id)
+    vector_store.delete_source(source_id, org_id)
     db.delete(source)
     db.commit()

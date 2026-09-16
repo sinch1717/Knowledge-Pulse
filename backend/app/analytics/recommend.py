@@ -68,7 +68,7 @@ def choose_category(cluster: TopicCluster, median_volume: float) -> str:
 
 
 def write_recommendation(
-    cluster: TopicCluster, category: str, samples: list[str], report_id: str
+    cluster: TopicCluster, category: str, samples: list[str], report_id: str, organization_id: str
 ) -> Recommendation:
     brief = CATEGORY_BRIEF[category]
     prompt = f"""Topic: {cluster.name}
@@ -117,6 +117,7 @@ Return JSON with exactly these keys:
 
     return Recommendation(
         id=new_id("rec"),
+        organization_id=organization_id,
         report_id=report_id,
         cluster_id=cluster.id,
         cluster_name=cluster.name,

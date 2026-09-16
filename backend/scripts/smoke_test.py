@@ -169,10 +169,11 @@ def main() -> None:
 
     create_tables()
     db = SessionLocal()
+    organization_id = "org_default"
 
     # ---- 1. ingest ------------------------------------------------------
-    log.info("1/5  Indexing a fixture corpus")
-    source = Source(id="src_smoke", kind="text", label="Fixture docs",
+    log.info("1/5  Indexing a fixture corpus (organization: %s)", organization_id)
+    source = Source(id="src_smoke", organization_id=organization_id, kind="text", label="Fixture docs",
                     location="memory", status="indexing")
     db.add(source)
     db.commit()
@@ -188,11 +189,11 @@ def main() -> None:
     texts = [c.text for c in raw]
     vectors = embeddings.embed(texts)
     ids = [f"chk_{n:04d}" for n in range(len(raw))]
-    metas = [{"source_id": source.id, "source_label": source.label,
+    metas = [{"organization_id": organization_id, "source_id": source.id, "source_label": source.label,
               "heading_path": c.heading_path, "url": ""} for c in raw]
-    vector_store.upsert(ids, vectors, metas, texts)
+    vector_store.upsert(ids, vectors, metas, texts, organization_id=organization_id)
     for chunk_id, c in zip(ids, raw):
-        db.add(Chunk(id=chunk_id, source_id=source.id, heading_path=c.heading_path,
+        db.add(Chunk(id=chunk_id, organization_id=organization_id, source_id=source.id, heading_path=c.heading_path,
                      text=c.text, word_count=c.word_count))
     source.status = "ready"
     source.chunk_count = len(ids)
@@ -201,8 +202,8 @@ def main() -> None:
 
     # ---- 2. retrieval and confidence ------------------------------------
     log.info("2/5  Checking retrieval confidence separates covered from uncovered")
-    hits_known, conf_known = engine.retrieve_only("can i edit an invoice after sending it")
-    hits_unknown, conf_unknown = engine.retrieve_only("upi autopay mandate revoked by bank")
+    hits_known, conf_known = engine.retrieve_only("can i edit an invoice after sending it", organization_id=organization_id)
+    hits_unknown, conf_unknown = engine.retrieve_only("upi autopay mandate revoked by bank", organization_id=organization_id)
     log.info("     covered question   confidence %.3f (%d hits)", conf_known, len(hits_known))
     log.info("     uncovered question confidence %.3f (%d hits)", conf_unknown, len(hits_unknown))
     assert conf_known > conf_unknown, "confidence failed to separate covered from uncovered"
@@ -229,6 +230,7 @@ def main() -> None:
                 engine.answer(
                     db, question,
                     session_id=f"smoke_{uuid.uuid4().hex[:8]}",
+                    organization_id=organization_id,
                     synthetic=True,
                     created_at=moment + timedelta(days=random.randint(0, 18)),
                 )
@@ -236,12 +238,12 @@ def main() -> None:
     log.info("     %d questions logged across %s", total,
              ", ".join(p.strftime("%Y-%m") for p in periods))
 
-    logged = db.query(Message).filter(Message.role == "customer").count()
+    logged = db.query(Message).filter(Message.role == "customer", Message.organization_id == organization_id).count()
     assert logged == total, f"expected {total} logged questions, found {logged}"
 
     # ---- 4. analytics ----------------------------------------------------
     log.info("4/5  Running the analytics batch over every period")
-    reports = batch.run_for_all_periods(db)
+    reports = batch.run_for_all_periods(db, organization_id=organization_id)
     assert reports, "no reports produced"
 
     final = reports[-1]
@@ -251,7 +253,7 @@ def main() -> None:
     from app.models import TopicCluster
 
     clusters = (db.query(TopicCluster)
-                .filter(TopicCluster.period == final.period)
+                .filter(TopicCluster.period == final.period, TopicCluster.organization_id == organization_id)
                 .order_by(TopicCluster.rank).all())
     log.info("     %d topics found", len(clusters))
     for c in clusters:
@@ -268,14 +270,39 @@ def main() -> None:
     assert final.recommendations, "report has no recommendations"
     categories = {r.category for r in final.recommendations}
     log.info("     %d recommendations across categories: %s",
-             len(final.recommendations), ", ".join(sorted(categories)))
+              len(final.recommendations), ", ".join(sorted(categories)))
     for rec in final.recommendations:
         assert rec.supporting_queries, f"{rec.id} has no evidence attached"
     log.info("     every recommendation carries its supporting questions")
 
+    # ---- 6. HTTP API validation with tenant header -----------------------
+    log.info("     Validating HTTP tenant header behavior via TestClient")
+    from starlette.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+
+    # Health endpoint works without header
+    r_health = client.get("/api/health")
+    assert r_health.status_code == 200, f"Health endpoint failed: {r_health.text}"
+
+    # Sources endpoint fails without header (400)
+    r_no_header = client.get("/api/sources")
+    assert r_no_header.status_code == 400, f"Expected 400 without header, got {r_no_header.status_code}"
+
+    # Sources endpoint succeeds with X-Organization-Id: org_default
+    r_with_header = client.get("/api/sources", headers={"X-Organization-Id": organization_id})
+    assert r_with_header.status_code == 200, f"Sources endpoint failed with header: {r_with_header.text}"
+    sources_data = r_with_header.json()
+    assert len(sources_data) >= 1, "Expected at least one source for org_default"
+
+    # Reports endpoint succeeds with header
+    r_report = client.get("/api/reports/latest", headers={"X-Organization-Id": organization_id})
+    assert r_report.status_code == 200, f"Latest report endpoint failed: {r_report.text}"
+
     db.close()
     log.info("")
-    log.info("All checks passed. The pipeline is wired correctly.")
+    log.info("All checks passed. The pipeline and HTTP multi-tenancy are wired correctly.")
     log.info("Real embeddings and a real model will change the quality of the output,")
     log.info("not its shape. Workspace: %s", workspace)
 

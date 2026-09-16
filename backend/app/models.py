@@ -9,7 +9,7 @@ NFR5 (explainability) true rather than aspirational.
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text, DateTime
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -21,11 +21,15 @@ def now() -> datetime:
 
 class Source(Base):
     __tablename__ = "sources"
+    __table_args__ = (
+        Index("ix_sources_org_created_at", "organization_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     kind: Mapped[str] = mapped_column(String(16))  # website | pdf | docx | text
     label: Mapped[str] = mapped_column(String(200))
-    location: Mapped[str] = mapped_column(Text)
+    location: Mapped[Text] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="queued")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -39,8 +43,12 @@ class Source(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+    __table_args__ = (
+        Index("ix_chunks_org_source_id", "organization_id", "source_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
     heading_path: Mapped[str] = mapped_column(Text, default="")
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -53,8 +61,12 @@ class Chunk(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (
+        Index("ix_conversations_org_session_id", "organization_id", "session_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     # Set for generated traffic so the archive can always be audited or filtered.
@@ -67,8 +79,14 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_messages_org_period", "organization_id", "period"),
+        Index("ix_messages_org_created_at", "organization_id", "created_at"),
+        Index("ix_messages_org_conversation_id", "organization_id", "conversation_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
@@ -88,8 +106,12 @@ class Message(Base):
 
 class TopicCluster(Base):
     __tablename__ = "topic_clusters"
+    __table_args__ = (
+        Index("ix_topic_clusters_org_period", "organization_id", "period"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     period: Mapped[str] = mapped_column(String(16), index=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
     name: Mapped[str] = mapped_column(Text)
@@ -111,8 +133,12 @@ class TopicCluster(Base):
 
 class ClusterMember(Base):
     __tablename__ = "cluster_members"
+    __table_args__ = (
+        Index("ix_cluster_members_org_cluster_id", "organization_id", "cluster_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     cluster_id: Mapped[str] = mapped_column(ForeignKey("topic_clusters.id", ondelete="CASCADE"), index=True)
     message_id: Mapped[str] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"))
 
@@ -121,8 +147,12 @@ class ClusterMember(Base):
 
 class Report(Base):
     __tablename__ = "reports"
+    __table_args__ = (
+        Index("ix_reports_org_period", "organization_id", "period"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     period: Mapped[str] = mapped_column(String(16), index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     conversation_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -137,8 +167,12 @@ class Report(Base):
 
 class Recommendation(Base):
     __tablename__ = "recommendations"
+    __table_args__ = (
+        Index("ix_recommendations_org_report_id", "organization_id", "report_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
     cluster_id: Mapped[str] = mapped_column(String(40))
     cluster_name: Mapped[str] = mapped_column(Text)
@@ -156,11 +190,16 @@ class Recommendation(Base):
 
 class EvaluationRun(Base):
     __tablename__ = "evaluation_runs"
+    __table_args__ = (
+        Index("ix_evaluation_runs_org_ran_at", "organization_id", "ran_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     ran_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     question_count: Mapped[int] = mapped_column(Integer, default=0)
     faithfulness: Mapped[float] = mapped_column(Float, default=0.0)
     answer_relevance: Mapped[float] = mapped_column(Float, default=0.0)
     context_relevance: Mapped[float] = mapped_column(Float, default=0.0)
     failures: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+

@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     chroma_path: str = "./data/chroma"
     upload_path: str = "./data/uploads"
 
+    # --- Multi-tenancy ---------------------------------------------------
+    # Temporary fallback for internal development tooling, legacy scripts, and migration.
+    # Must NOT be used as an automatic HTTP fallback.
+    default_organization_id: str = "org_default"
+
     # --- Language model --------------------------------------------------
     # "groq" for development, "gemini" for the demo. One interface, two adapters.
     llm_provider: str = "groq"

@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import llm  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.db import SessionLocal, create_tables  # noqa: E402
 from app.models import Chunk, Source  # noqa: E402
 from app.rag import engine  # noqa: E402
@@ -68,15 +69,19 @@ The value of "questions" must be an array of strings.
 """
 
 
-def load_corpus_headings(db, limit: int = 60) -> tuple[str, str]:
-    source = db.query(Source).filter(Source.status == "ready").first()
+def load_corpus_headings(db, organization_id: str, limit: int = 60) -> tuple[str, str]:
+    source = (
+        db.query(Source)
+        .filter(Source.status == "ready", Source.organization_id == organization_id)
+        .first()
+    )
     if source is None:
         raise SystemExit(
-            "No indexed source found. Add and index a website first, then run this again."
+            f"No indexed source found for organization '{organization_id}'. Add and index a website first, then run this again."
         )
     headings = (
         db.query(Chunk.heading_path)
-        .filter(Chunk.source_id == source.id)
+        .filter(Chunk.source_id == source.id, Chunk.organization_id == organization_id)
         .distinct()
         .limit(limit)
         .all()
@@ -175,6 +180,11 @@ def generate_questions(topic: str, label: str, n: int) -> list[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--organization-id",
+        default=settings.default_organization_id,
+        help=f"Organization tenant identifier (default: {settings.default_organization_id})",
+    )
     parser.add_argument("--questions", type=int, default=800)
     parser.add_argument("--periods", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true", help="Write the question set, do not replay it")
@@ -183,8 +193,8 @@ def main() -> None:
     create_tables()
     db = SessionLocal()
     try:
-        label, headings = load_corpus_headings(db)
-        log.info("Generating traffic for: %s", label)
+        label, headings = load_corpus_headings(db, args.organization_id)
+        log.info("Generating traffic for: %s (organization %s)", label, args.organization_id)
 
         today = datetime.now(timezone.utc).replace(day=15, hour=10, minute=0, second=0, microsecond=0)
         periods = []
@@ -218,6 +228,7 @@ def main() -> None:
         out_dir = Path("data")
         out_dir.mkdir(exist_ok=True)
         audit = {
+            "organization_id": args.organization_id,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_label": label,
             "periods": periods,
@@ -255,15 +266,16 @@ def main() -> None:
                         db,
                         question,
                         session_id=f"seed_{uuid.uuid4().hex[:10]}",
+                        organization_id=args.organization_id,
                         synthetic=True,
                         created_at=when,
                     )
                     replayed += 1
                     if replayed % 25 == 0:
-                        log.info("Replayed %d questions (%s)", replayed, period)
+                        log.info("Replayed %d questions (%s) for org %s", replayed, period, args.organization_id)
             log.info("Period %s done (%d/%d)", period, position + 1, len(periods))
 
-        log.info("Seeded %d conversations. Next: python scripts/run_analytics.py", replayed)
+        log.info("Seeded %d conversations for org %s. Next: python scripts/run_analytics.py", replayed, args.organization_id)
     finally:
         db.close()
 
