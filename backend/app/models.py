@@ -19,6 +19,17 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class OrgProfile(Base):
+    __tablename__ = "org_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    name: Mapped[str] = mapped_column(String(200), default="KnowledgePulse")
+    description: Mapped[str] = mapped_column(Text, default="")
+    industry: Mapped[str] = mapped_column(String(200), default="")
+    voice_description: Mapped[str] = mapped_column(
+        Text,
+        default="Professional, concise, friendly and helpful."
+    )
 class Source(Base):
     __tablename__ = "sources"
 

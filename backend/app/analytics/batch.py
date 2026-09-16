@@ -27,6 +27,7 @@ from app.models import (
     Recommendation,
     Report,
     TopicCluster,
+    OrgProfile,
 )
 
 log = logging.getLogger(__name__)
@@ -127,6 +128,20 @@ def _clear_period(db: Session, period: str) -> None:
 def _build_report(
     db: Session, period: str, rows: list[TopicCluster], questions: list[Message]
 ) -> Report:
+    profile = db.get(OrgProfile, 1)
+
+    if profile is None:
+        profile = OrgProfile(
+            id=1,
+            name="KnowledgePulse",
+            description="",
+            industry="",
+            voice_description="Professional, concise, friendly and helpful.",
+        )
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+
     low = sum(1 for q in questions if (q.confidence or 0) < settings.low_confidence_threshold)
     unanswered_rate = round(low / len(questions), 4)
 
@@ -144,13 +159,17 @@ def _build_report(
         conversation_count=conversation_count,
         query_count=len(questions),
         unanswered_rate=unanswered_rate,
-        summary=recommend.write_summary(period, rows, unanswered_rate),
+        summary=recommend.write_summary(
+            profile,
+            period,
+            rows,
+            unanswered_rate,
+        ),
     )
+
     db.add(report)
     db.flush()
 
-    # Only the top of the ranked list becomes a recommendation. A report with
-    # eighteen actions on it is a report nobody acts on.
     top = rows[:6]
     volumes = sorted(r.query_count for r in rows)
     median_volume = volumes[len(volumes) // 2]
@@ -158,7 +177,15 @@ def _build_report(
     for row in top:
         samples = _sample_questions(db, row.id, limit=8)
         category = recommend.choose_category(row, median_volume)
-        db.add(recommend.write_recommendation(row, category, samples, report.id))
+        db.add(
+            recommend.write_recommendation(
+                profile,
+                row,
+                category,
+                samples,
+                report.id,
+            )
+        )
 
     db.commit()
     db.refresh(report)

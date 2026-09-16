@@ -1,5 +1,4 @@
 """Retrieval, confidence, generation, logging.
-
 The important sequencing decision is that confidence is computed *before* the
 generator runs, from the similarity distribution of the retrieved chunks alone.
 That is the whole point of F2. A language model will write a fluent, assured
@@ -8,7 +7,6 @@ certainty tells you nothing about whether your corpus contained the answer.
 Retrieval similarity does, and it stays a valid diagnostic months later when the
 generated text is long forgotten.
 """
-
 from __future__ import annotations
 
 import logging
@@ -19,20 +17,33 @@ from sqlalchemy.orm import Session
 
 from app import embeddings, llm, vector_store
 from app.config import settings
-from app.models import Conversation, Message
+from app.models import Conversation, Message, OrgProfile
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a support assistant for one organisation. You answer only \
-from the passages given to you.
+
+def build_system_prompt(profile: OrgProfile) -> str:
+    return f"""You are a support assistant for {profile.name}.
+
+About the organisation:
+{profile.description}
+
+Industry:
+{profile.industry}
+
+Communication style:
+{profile.voice_description}
+
+You answer only from the passages given to you.
 
 Rules:
 - If the passages contain the answer, give it plainly and briefly.
-- If they only partly cover the question, answer the part you can and say clearly \
-which part you could not find.
-- If they do not cover it at all, say so directly. Do not guess, and do not fill the \
-gap from general knowledge.
-- Write the way a helpful colleague would. No preamble, no restating the question."""
+- If they only partly cover the question, answer the part you can and say clearly
+  which part you could not find.
+- If they do not cover it at all, say so directly. Do not guess, and do not fill the
+  gap from general knowledge.
+- Write according to the organisation's communication style.
+- No preamble, no restating the question."""
 
 
 def new_id(prefix: str) -> str:
@@ -46,7 +57,6 @@ def current_period(when: datetime | None = None) -> str:
 
 def compute_confidence(similarities: list[float]) -> float:
     """Blend the best match with the average of the rest.
-
     A single strong hit surrounded by noise is weaker evidence than several
     consistent hits, so neither the maximum nor the mean alone is right. The
     weighting is configurable; 0.6 on the top match is the default.
@@ -84,11 +94,17 @@ def answer(
     period = current_period(created_at)
 
     conversation = (
-        db.query(Conversation).filter(Conversation.session_id == session_id).one_or_none()
+        db.query(Conversation)
+        .filter(Conversation.session_id == session_id)
+        .one_or_none()
     )
+
     if conversation is None:
         conversation = Conversation(
-            id=new_id("conv"), session_id=session_id, started_at=created_at, synthetic=synthetic
+            id=new_id("conv"),
+            session_id=session_id,
+            started_at=created_at,
+            synthetic=synthetic,
         )
         db.add(conversation)
         db.flush()
@@ -106,7 +122,7 @@ def answer(
             conversation_id=conversation.id,
             role="customer",
             text=question,
-            confidence=confidence,  # carried on the query too, so clustering can use it
+            confidence=confidence,
             retrieved_chunk_ids=[h["chunk_id"] for h in hits],
             retrieved_scores=similarities,
             created_at=created_at,
@@ -122,7 +138,28 @@ def answer(
         )
     else:
         try:
-            text = llm.complete(build_prompt(question, hits), system=SYSTEM_PROMPT)
+            # Load the single organisation profile for this deployment.
+            profile = db.get(OrgProfile, 1)
+
+            if profile is None:
+                profile = OrgProfile(
+                    id=1,
+                    name="KnowledgePulse",
+                    description="",
+                    industry="",
+                    voice_description="Professional, concise, friendly and helpful.",
+                )
+                db.add(profile)
+                db.commit()
+                db.refresh(profile)
+
+            system_prompt = build_system_prompt(profile)
+
+            text = llm.complete(
+                build_prompt(question, hits),
+                system=system_prompt,
+            )
+
         except llm.LLMError as exc:
             # NFR3: degrade to returning what was retrieved rather than failing.
             log.warning("Generation unavailable, returning passages: %s", exc)
@@ -142,6 +179,7 @@ def answer(
         created_at=created_at,
         period=period,
     )
+
     db.add(assistant)
     db.commit()
 
@@ -155,10 +193,14 @@ def answer(
         }
         for h in hits
     ]
+
     return assistant
 
 
 def retrieve_only(question: str) -> tuple[list[dict], float]:
     """Used by the evaluation harness, which needs context without logging a turn."""
-    hits = vector_store.search(embeddings.embed_one(question), settings.retrieval_top_k)
+    hits = vector_store.search(
+        embeddings.embed_one(question),
+        settings.retrieval_top_k,
+    )
     return hits, compute_confidence([h["similarity"] for h in hits])
