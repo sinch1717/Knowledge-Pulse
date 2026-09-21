@@ -8,6 +8,7 @@ import type {
   InsightDetail,
   Overview,
   Report,
+  ReportSummary,
   Source,
 } from "@/lib/types";
 
@@ -389,3 +390,37 @@ export const mockEvaluation: EvaluationRun = {
     { question: "Is there a batch endpoint for creating invoices?", metric: "context_relevance", score: 0.29 },
   ],
 };
+
+export const mockPeriods: string[] = ["August 2026", "July 2026", "June 2026"];
+
+export const mockReportHistory: ReportSummary[] = [
+  {
+    id: mockReport.id,
+    period: mockReport.period,
+    generatedAt: mockReport.generatedAt,
+    conversationCount: mockReport.conversationCount,
+    queryCount: mockReport.queryCount,
+    unansweredRate: mockReport.unansweredRate,
+    summary: mockReport.summary,
+  },
+  {
+    id: "rep_2026_07",
+    period: "July 2026",
+    generatedAt: "2026-08-01T02:00:00Z",
+    conversationCount: 168,
+    queryCount: 341,
+    unansweredRate: 0.14,
+    summary:
+      "Export invoice GST fields and payout timing lead again. A small cluster about UPI autopay appeared for the first time, eleven questions, none answered well.",
+  },
+  {
+    id: "rep_2026_06",
+    period: "June 2026",
+    generatedAt: "2026-07-01T02:00:00Z",
+    conversationCount: 131,
+    queryCount: 268,
+    unansweredRate: 0.12,
+    summary:
+      "First full period. Most questions were about invoice editing and GST on export invoices, and retrieval held up on everything except the export fields.",
+  },
+];

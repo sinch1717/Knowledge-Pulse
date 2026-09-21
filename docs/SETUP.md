@@ -67,6 +67,8 @@ Getting from an empty database to a populated dashboard is four commands, in thi
 curl -X POST localhost:8000/api/sources -H 'Content-Type: application/json' \
   -d '{"kind":"website","location":"https://docs.example.com"}'
 
+curl -X POST localhost:8000/api/sources -H 'Content-Type: application/json' \ -d '{"kind":"website","location":"https://plausible.io/docs"}'
+
 # 2. generate and replay a conversation archive across three periods
 python scripts/seed_conversations.py --questions 800
 

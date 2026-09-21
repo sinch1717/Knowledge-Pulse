@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ActionCategory, TrendState } from "@/lib/types";
 
 export const pct = (n: number, digits = 0) => `${(n * 100).toFixed(digits)}%`;
@@ -31,11 +31,16 @@ export const categoryCopy: Record<ActionCategory, { label: string; note: string 
   customer_issue: { label: "Reply directly", note: "Individual conversations left unresolved" },
 };
 
-/** Minimal async hook. No cache, no retries — the app only reads a handful of endpoints. */
+/**
+ * Minimal async hook. No cache, no retries — the app only reads a handful of
+ * endpoints. `reload` re-runs the request and keeps the previous data on screen
+ * while it does, so a refresh never flashes an empty page.
+ */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -49,7 +54,39 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, tick]);
 
-  return { data, error, loading };
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+
+  return { data, error, loading, reload };
 }
+
+/** "2 hours ago", "3 days ago". Falls back to a date past a month. */
+export const relativeTime = (iso: string | null) => {
+  if (!iso) return "never";
+  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const units: [number, string][] = [
+    [60 * 60 * 24 * 30, ""],
+    [60 * 60 * 24, "day"],
+    [60 * 60, "hour"],
+    [60, "minute"],
+  ];
+  for (const [size, name] of units) {
+    if (seconds >= size) {
+      if (!name) return dateLabel(iso);
+      const n = Math.floor(seconds / size);
+      return `${n} ${name}${n === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "just now";
+};
+
+export type Direction = "growing" | "stable" | "declining";
+
+/** Growth within ±5% reads as stable. */
+export const directionOf = (growth: number): Direction =>
+  growth > 0.05 ? "growing" : growth < -0.05 ? "declining" : "stable";
+
+/** Confidence below this is treated as "answered poorly" everywhere in the app. */
+export const WEAK_CONFIDENCE = 0.4;

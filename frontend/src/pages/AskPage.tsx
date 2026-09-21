@@ -1,137 +1,103 @@
-import { useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, usingMockData } from "@/lib/api";
 import type { Message } from "@/lib/types";
-import { Button, Page } from "@/components/ui";
+import { PageContainer, PageHeader, Panel } from "@/components/ui";
+import {
+  AssistantMessageBubble,
+  ChatComposer,
+  ChatEmptyState,
+  ChatError,
+  ChatLoadingBubble,
+  UserMessageBubble,
+} from "@/components/ask/chat";
 
 const sessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
 
-const starters = [
-  "Can I edit an invoice after I've sent it?",
-  "Why did my client's autopay not go through?",
-  "Where do I add an LUT number for an export invoice?",
-];
+// The placeholder data describes an invoicing product; the live demo indexes
+// the Plausible Analytics docs. Examples follow whichever is on screen.
+const examples = usingMockData
+  ? [
+      "Can I edit an invoice after I've sent it?",
+      "Why did my client's autopay not go through?",
+      "Where do I add an LUT number for an export invoice?",
+    ]
+  : [
+      "How do I add the tracking script to my site?",
+      "Can I exclude my own visits from the stats?",
+      "How do I set up a custom event goal?",
+    ];
 
 export function AskPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState<{ question: string; error: string } | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
 
-  async function send(text: string) {
-    const question = text.trim();
-    if (!question || pending) return;
-    setDraft("");
-    setMessages((m) => [
-      ...m,
-      { id: `local_${Date.now()}`, role: "customer", text: question, createdAt: new Date().toISOString() },
-    ]);
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
+  }, [messages, pending, failed]);
+
+  async function ask(question: string, addTurn: boolean) {
+    if (addTurn) {
+      setMessages((m) => [
+        ...m,
+        { id: `local_${Date.now()}`, role: "customer", text: question, createdAt: new Date().toISOString() },
+      ]);
+    }
+    setFailed(null);
     setPending(true);
     try {
       const reply = await api.ask(question, sessionId);
       setMessages((m) => [...m, reply]);
     } catch (e) {
-      setMessages((m) => [
-        ...m,
-        {
-          id: `err_${Date.now()}`,
-          role: "assistant",
-          text: `The assistant is not reachable. ${(e as Error).message}`,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      setFailed({ question, error: (e as Error).message });
     } finally {
       setPending(false);
-      requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
     }
   }
 
+  function send(text: string) {
+    const question = text.trim();
+    if (!question || pending) return;
+    setDraft("");
+    void ask(question, true);
+  }
+
   return (
-    <Page
-      title="Ask"
-      standfirst="The customer-facing side. Every turn here is logged with its retrieval confidence and feeds the analytics batch."
-    >
-      <div className="max-w-measure">
-        {messages.length === 0 && (
-          <div className="mb-8">
-            <p className="text-ink-soft">Try one of these, or type your own.</p>
-            <div className="mt-3 space-y-2">
-              {starters.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => send(s)}
-                  className="block w-full border-l-2 border-rule-strong px-4 py-2 text-left text-small text-ink-soft transition-colors hover:border-oxblood hover:bg-paper-raised hover:text-ink"
-                >
-                  {s}
-                </button>
-              ))}
+    <PageContainer narrow>
+      <PageHeader centered title="Ask KnowledgePulse" description="Ask a question about your connected knowledge." />
+
+      <Panel className="flex h-[calc(100vh-20rem)] min-h-[26rem] flex-col">
+        <div className="border-b border-rule px-5 py-3">
+          <p className="text-small font-medium">Assistant</p>
+        </div>
+
+        <div ref={scroller} className="flex-1 overflow-y-auto px-5 py-6" aria-live="polite">
+          {messages.length === 0 && !pending ? (
+            <ChatEmptyState examples={examples} onPick={send} />
+          ) : (
+            <div className="space-y-6">
+              {messages.map((m) =>
+                m.role === "customer" ? (
+                  <UserMessageBubble key={m.id} text={m.text} />
+                ) : (
+                  <AssistantMessageBubble key={m.id} message={m} />
+                ),
+              )}
+              {pending && <ChatLoadingBubble />}
+              {failed && <ChatError message={failed.error} onRetry={() => ask(failed.question, false)} />}
             </div>
-          </div>
-        )}
-
-        <div className="space-y-8">
-          {messages.map((m) =>
-            m.role === "customer" ? (
-              <p key={m.id} className="border-l-2 border-ink pl-4 text-lead">
-                {m.text}
-              </p>
-            ) : (
-              <div key={m.id}>
-                {m.text.split("\n\n").map((para, n) => (
-                  <p key={n} className="mb-3 text-base text-ink-soft last:mb-0">
-                    {para}
-                  </p>
-                ))}
-
-                {typeof m.confidence === "number" && (
-                  <div className="mt-4 flex items-center gap-3">
-                    <div className="h-1 w-32 bg-paper-sunk">
-                      <div
-                        className="h-full"
-                        style={{
-                          width: `${m.confidence * 100}%`,
-                          background: m.confidence < 0.4 ? "#7A2E2E" : "#5A6337",
-                        }}
-                      />
-                    </div>
-                    <span className="tabular font-mono text-micro text-ink-faint">
-                      retrieval confidence {m.confidence.toFixed(2)}
-                      {m.confidence < 0.4 && " — the sources may not cover this"}
-                    </span>
-                  </div>
-                )}
-
-                {m.citations && m.citations.length > 0 && (
-                  <div className="mt-4 space-y-3">
-                    {m.citations.map((c) => (
-                      <figure key={c.chunkId} className="border-l border-rule-strong pl-4">
-                        <blockquote className="text-small text-ink-soft">{c.excerpt}</blockquote>
-                        <figcaption className="mt-1 font-mono text-micro text-ink-faint">
-                          {c.sourceLabel} · {c.headingPath} · {c.similarity.toFixed(2)}
-                        </figcaption>
-                      </figure>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ),
           )}
-          {pending && <p className="text-small text-ink-faint">Searching the sources…</p>}
-          <div ref={endRef} />
         </div>
 
-        <div className="sticky bottom-0 mt-10 flex gap-2 border-t border-rule bg-paper py-4">
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send(draft)}
-            placeholder="Ask about invoicing, payments or your account"
-            className="min-w-0 flex-1 rounded border border-rule-strong bg-paper-raised px-4 py-2.5 text-base placeholder:text-ink-faint"
-          />
-          <Button onClick={() => send(draft)} disabled={pending || !draft.trim()}>
-            Send
-          </Button>
+        <div className="border-t border-rule p-3">
+          <ChatComposer value={draft} onChange={setDraft} onSend={() => send(draft)} disabled={pending} />
+          <p className="mt-2 px-1 text-micro text-ink-faint">
+            Enter to send, Shift and Enter for a new line. Every question is logged for the period's analytics.
+          </p>
         </div>
-      </div>
-    </Page>
+      </Panel>
+    </PageContainer>
   );
 }

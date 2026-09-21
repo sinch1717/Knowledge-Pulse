@@ -9,10 +9,13 @@ import {
   mockInsightDetail,
   mockInsights,
   mockOverview,
+  mockPeriods,
   mockReport,
+  mockReportHistory,
   mockSources,
 } from "@/mock/data";
 import type {
+  BackendState,
   Citation,
   EvaluationRun,
   Insight,
@@ -20,7 +23,9 @@ import type {
   Message,
   Overview,
   Report,
+  ReportSummary,
   Source,
+  SourceKind,
 } from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -28,36 +33,69 @@ export const usingMockData = BASE === "";
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
+/** Turn a failed response into a readable message. FastAPI puts it in `detail`. */
+async function failure(res: Response): Promise<Error> {
+  const detail = await res
+    .json()
+    .then((b) => (typeof b?.detail === "string" ? b.detail : null))
+    .catch(() => null);
+  return new Error(detail ?? `Request failed with status ${res.status}`);
+}
+
 async function get<T>(path: string, fallback: T): Promise<T> {
   if (usingMockData) {
     await delay();
     return fallback;
   }
   const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) {
-    // The backend explains itself in `detail` — "No report yet, run the analytics
-    // batch first" is far more useful to show than "404".
-    const detail = await res
-      .json()
-      .then((b) => b?.detail)
-      .catch(() => null);
-    throw new Error(detail ?? `Request failed with status ${res.status}`);
-  }
+  if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
+
+async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: body instanceof FormData || body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) throw await failure(res);
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+const kindFromFilename = (name: string): SourceKind => {
+  const ext = name.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") return "pdf";
+  if (ext === "docx") return "docx";
+  return "text";
+};
 
 export const api = {
   getOverview: () => get<Overview>("/api/overview", mockOverview),
 
+  /** Reachability check for the Sources page. Never throws. */
+  getHealth: async (): Promise<BackendState> => {
+    if (usingMockData) return "mock";
+    try {
+      const res = await fetch(`${BASE}/api/health`);
+      return res.ok ? "connected" : "unreachable";
+    } catch {
+      return "unreachable";
+    }
+  },
+
+  // ---- sources -------------------------------------------------------------
+
   getSources: () => get<Source[]>("/api/sources", mockSources),
 
-  addSource: async (payload: { kind: "website" | "pdf" | "docx" | "text"; location: string }) => {
+  addSource: async (payload: { kind: SourceKind; location: string; label?: string }) => {
     if (usingMockData) {
       await delay(500);
       const created: Source = {
         id: `src_${Math.random().toString(36).slice(2, 7)}`,
         kind: payload.kind,
-        label: payload.location.replace(/^https?:\/\//, "").split("/")[0],
+        label: payload.label || payload.location.replace(/^https?:\/\//, "").split("/")[0],
         location: payload.location,
         status: "queued",
         pageCount: 0,
@@ -67,16 +105,61 @@ export const api = {
       };
       return created;
     }
-    const res = await fetch(`${BASE}/api/sources`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return (await res.json()) as Source;
+    return send<Source>("POST", "/api/sources", payload);
   },
 
-  getInsights: () => get<Insight[]>("/api/insights", mockInsights),
+  uploadSource: async (file: File, label?: string) => {
+    if (usingMockData) {
+      await delay(700);
+      const created: Source = {
+        id: `src_${Math.random().toString(36).slice(2, 7)}`,
+        kind: kindFromFilename(file.name),
+        label: label || file.name.replace(/\.[^.]+$/, ""),
+        location: file.name,
+        status: "indexing",
+        pageCount: 0,
+        chunkCount: 0,
+        lastIndexedAt: null,
+        contentHash: null,
+      };
+      return created;
+    }
+    const form = new FormData();
+    form.append("file", file);
+    if (label) form.append("label", label);
+    return send<Source>("POST", "/api/sources/upload", form);
+  },
+
+  reindexSource: async (id: string) => {
+    if (usingMockData) {
+      await delay(400);
+      return;
+    }
+    await send<unknown>("POST", `/api/sources/${id}/reindex`);
+  },
+
+  deleteSource: async (id: string) => {
+    if (usingMockData) {
+      await delay(400);
+      return;
+    }
+    await send<unknown>("DELETE", `/api/sources/${id}`);
+  },
+
+  // ---- analytics -----------------------------------------------------------
+
+  runAnalytics: async () => {
+    if (usingMockData) {
+      await delay(1200);
+      return;
+    }
+    await send<unknown>("POST", "/api/analytics/run");
+  },
+
+  getPeriods: () => get<string[]>("/api/periods", mockPeriods),
+
+  getInsights: (period?: string) =>
+    get<Insight[]>(`/api/insights${period ? `?period=${encodeURIComponent(period)}` : ""}`, mockInsights),
 
   getInsight: async (id: string) => {
     if (usingMockData) {
@@ -105,9 +188,15 @@ export const api = {
     return get<InsightDetail>(`/api/insights/${id}`, {} as InsightDetail);
   },
 
+  // ---- reports and evaluation ---------------------------------------------
+
   getReport: () => get<Report>("/api/reports/latest", mockReport),
 
+  getReports: () => get<ReportSummary[]>("/api/reports", mockReportHistory),
+
   getEvaluation: () => get<EvaluationRun>("/api/evaluation/latest", mockEvaluation),
+
+  // ---- chat ----------------------------------------------------------------
 
   ask: async (question: string, sessionId: string): Promise<Message> => {
     if (usingMockData) {
@@ -138,12 +227,6 @@ export const api = {
         ],
       };
     }
-    const res = await fetch(`${BASE}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, session_id: sessionId }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return (await res.json()) as Message;
+    return send<Message>("POST", "/api/chat", { question, session_id: sessionId });
   },
 };

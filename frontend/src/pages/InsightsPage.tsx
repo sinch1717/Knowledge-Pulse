@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import { growthLabel, trendCopy, useAsync } from "@/lib/format";
+import { trendCopy, useAsync } from "@/lib/format";
 import type { TrendState } from "@/lib/types";
-import { ErrorNote, Loading, Page, PriorityBar, TrendTag } from "@/components/ui";
+import { EmptyState, ErrorState, PageContainer, PageHeader, RefreshButton, RowSkeletons, inputClass } from "@/components/ui";
+import { InsightList } from "@/components/insights/InsightList";
 
 type Filter = "all" | TrendState;
 
@@ -16,21 +16,52 @@ const filters: { key: Filter; label: string }[] = [
 ];
 
 export function InsightsPage() {
+  const periods = useAsync(() => api.getPeriods(), []);
+  const [period, setPeriod] = useState<string>("");
   const [filter, setFilter] = useState<Filter>("all");
-  const { data, error, loading } = useAsync(() => api.getInsights(), []);
+  const insights = useAsync(() => api.getInsights(period || undefined), [period]);
 
-  const shown = data?.filter((i) => filter === "all" || i.trend === filter) ?? [];
+  // Default to the most recent period once the list arrives.
+  useEffect(() => {
+    if (!period && periods.data?.length) setPeriod(periods.data[0]);
+  }, [period, periods.data]);
+
+  const shown = insights.data?.filter((i) => filter === "all" || i.trend === filter) ?? [];
 
   return (
-    <Page
-      title="Insights"
-      standfirst="Every topic the assistant saw this period, ranked by volume, growth, how badly retrieval performed and how blocking the topic is."
-    >
-      <div className="mb-6 flex flex-wrap gap-2">
+    <PageContainer>
+      <PageHeader
+        title="Insights"
+        description="What customers are asking, what is changing, and where the knowledge base appears weakest."
+        actions={
+          <>
+            {periods.data && periods.data.length > 0 && (
+              <label className="flex items-center gap-2 text-small text-ink-soft">
+                <span className="sr-only">Period</span>
+                <select
+                  value={period}
+                  onChange={(e) => setPeriod(e.target.value)}
+                  className={clsx(inputClass, "w-auto py-2 pr-8 text-small")}
+                >
+                  {periods.data.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <RefreshButton onClick={insights.reload} loading={insights.loading} />
+          </>
+        }
+      />
+
+      <div className="mb-6 flex flex-wrap items-center gap-2">
         {filters.map((f) => (
           <button
             key={f.key}
             onClick={() => setFilter(f.key)}
+            aria-pressed={filter === f.key}
             className={clsx(
               "rounded border px-3 py-1.5 text-small transition-colors",
               filter === f.key
@@ -41,45 +72,30 @@ export function InsightsPage() {
             {f.label}
           </button>
         ))}
-        {filter !== "all" && (
-          <span className="self-center pl-1 text-micro text-ink-faint">{trendCopy[filter].note}</span>
-        )}
+        {filter !== "all" && <span className="pl-1 text-micro text-ink-faint">{trendCopy[filter].note}</span>}
       </div>
 
-      {error && <ErrorNote message={error} />}
-      {loading && <Loading label="Reading the archive" />}
+      {insights.error && <ErrorState message={insights.error} onRetry={insights.reload} />}
+      {!insights.data && !insights.error && <RowSkeletons rows={6} />}
 
-      {data && (
-        <div className="border-t border-rule-strong">
-          {shown.map((i) => (
-            <Link key={i.id} to={`/insights/${i.id}`} className="ledger-row block">
-              <PriorityBar value={i.priority} />
-              <div className="relative flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="tabular font-mono text-small text-ink-faint">
-                  {String(i.rank).padStart(2, "0")}
-                </span>
-                <span className="text-lead">{i.name}</span>
-                <TrendTag state={i.trend} />
-              </div>
-              <p className="relative mt-1 max-w-measure pl-8 text-small text-ink-soft">
-                {i.sampleQueries[0]}
-              </p>
-              <div className="relative mt-2 flex flex-wrap gap-x-6 gap-y-1 pl-8 font-mono text-micro text-ink-faint">
-                <span className="tabular">{i.queryCount} questions</span>
-                <span className="tabular">{growthLabel(i.growth)} vs last period</span>
-                <span className="tabular">confidence {i.meanConfidence.toFixed(2)}</span>
-                <span className="tabular">priority {i.priority.toFixed(2)}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
+      {insights.data && insights.data.length === 0 && (
+        <EmptyState
+          title="No topics for this period"
+          description="Topics appear after the analytics batch has clustered the period's questions. Run analytics from This period, then refresh."
+        />
       )}
 
+      {insights.data && insights.data.length > 0 && shown.length === 0 && (
+        <EmptyState title={`No ${filter} topics this period`} description="Try another filter or period." />
+      )}
+
+      {shown.length > 0 && <InsightList insights={shown} />}
+
       <p className="mt-8 max-w-measure text-small text-ink-faint">
-        Priority combines four signals: how many people asked, how fast that number is moving, how far
-        retrieval confidence fell short, and an inferred sense of how badly the topic blocks the customer.
-        Weights are 0.30, 0.30, 0.25 and 0.15 by default and can be changed in the backend config.
+        Priority combines four signals: how many people asked, how fast that number is moving, how far retrieval
+        confidence fell short, and how badly the topic blocks the customer. Default weights are 0.30, 0.30, 0.25 and
+        0.15.
       </p>
-    </Page>
+    </PageContainer>
   );
 }

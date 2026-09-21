@@ -110,3 +110,17 @@ export interface Overview {
   emergingCount: number;
   volumeByPeriod: TrendPoint[];
 }
+
+/** One row of the report archive. The full report is fetched separately. */
+export interface ReportSummary {
+  id: string;
+  period: string;
+  generatedAt: string;
+  conversationCount: number;
+  queryCount: number;
+  unansweredRate: number;
+  summary: string;
+}
+
+/** "mock" when running on placeholder data, otherwise whether the API answered. */
+export type BackendState = "mock" | "connected" | "unreachable";

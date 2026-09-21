@@ -1,134 +1,124 @@
-import { Link } from "react-router-dom";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useState } from "react";
+import { Play } from "lucide-react";
 import { api } from "@/lib/api";
-import { growthLabel, pct, useAsync } from "@/lib/format";
-import { ErrorNote, Loading, Page, PriorityBar, Stat, TrendTag } from "@/components/ui";
+import { pct, useAsync } from "@/lib/format";
+import {
+  Button,
+  ChartSkeleton,
+  EmptyState,
+  ErrorState,
+  MetricCard,
+  MetricGrid,
+  MetricSkeletons,
+  PageContainer,
+  PageHeader,
+  RefreshButton,
+} from "@/components/ui";
+import { useToast } from "@/components/toast";
+import { ConfidenceChart, QuestionVolumeChart } from "@/components/overview/charts";
+import { AtAGlance } from "@/components/overview/AtAGlance";
 
 export function OverviewPage() {
   const overview = useAsync(() => api.getOverview(), []);
   const insights = useAsync(() => api.getInsights(), []);
+  const toast = useToast();
+  const [running, setRunning] = useState(false);
 
-  if (overview.error) return <Page title="This period"><ErrorNote message={overview.error} /></Page>;
-  if (!overview.data || !insights.data) return <Page title="This period"><Loading /></Page>;
+  const refreshing = overview.loading || insights.loading;
+  const refresh = () => {
+    overview.reload();
+    insights.reload();
+  };
+
+  async function runAnalytics() {
+    setRunning(true);
+    try {
+      await api.runAnalytics();
+      toast("Analytics started. Topics and the report will update when the batch finishes.", "success");
+      refresh();
+    } catch (e) {
+      toast(`Could not start analytics. ${(e as Error).message}`, "error");
+    } finally {
+      setRunning(false);
+    }
+  }
 
   const o = overview.data;
-  const top = insights.data.slice(0, 4);
-  const emerging = insights.data.filter((i) => i.trend === "emerging");
 
   return (
-    <Page
-      title={o.period}
-      standfirst="Everything below comes from questions customers asked the assistant. Nothing was solicited."
-    >
-      {/* Lede: the single sentence that says what happened this month. */}
-      <p className="mb-12 max-w-[26ch] font-display text-display font-semibold leading-[1.02] tracking-tight md:max-w-[22ch]">
-        {o.queryCount.toLocaleString()} questions,{" "}
-        <span className="text-ink-faint">{o.topicCount} topics,</span>{" "}
-        <span className="text-oxblood">{o.emergingCount} of them new.</span>
-      </p>
+    <PageContainer>
+      <PageHeader
+        centered
+        title="This period"
+        description={
+          o
+            ? `Customer conversation and knowledge health for ${o.period}.`
+            : "Customer conversation and knowledge health for the current period."
+        }
+        actions={
+          <>
+            <RefreshButton onClick={refresh} loading={refreshing} />
+            <Button onClick={runAnalytics} busy={running}>
+              {!running && <Play size={14} aria-hidden />}
+              {running ? "Running analytics" : "Run analytics"}
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid gap-8 md:grid-cols-4">
-        <Stat label="Conversations" value={o.conversationCount.toLocaleString()} note="Distinct sessions" />
-        <Stat
-          label="Answered poorly"
-          value={pct(o.unansweredRate)}
-          note="Retrieval confidence below 0.4"
-          tone="oxblood"
-        />
-        <Stat label="Mean confidence" value={o.meanConfidence.toFixed(2)} note="Across every answered turn" />
-        <Stat label="Emerging concerns" value={String(o.emergingCount)} note="Rising from a low base" tone="ochre" />
-      </div>
+      {overview.error && !o && <ErrorState message={overview.error} onRetry={overview.reload} />}
 
-      <section className="mt-14">
-        <h2 className="text-h3 font-semibold">Question volume</h2>
-        <div className="mt-4 h-52 border-t border-rule pt-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={o.volumeByPeriod} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
-              <defs>
-                <linearGradient id="vol" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#7A2E2E" stopOpacity={0.22} />
-                  <stop offset="100%" stopColor="#7A2E2E" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="period"
-                tick={{ fill: "#8B8171", fontSize: 12 }}
-                axisLine={{ stroke: "#DDD5C6" }}
-                tickLine={false}
-              />
-              <YAxis tick={{ fill: "#8B8171", fontSize: 12 }} axisLine={false} tickLine={false} />
-              <Tooltip
-                cursor={{ stroke: "#C7BCA6" }}
-                contentStyle={{
-                  background: "#FBF8F1",
-                  border: "1px solid #DDD5C6",
-                  borderRadius: 3,
-                  fontSize: 13,
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="queries"
-                stroke="#7A2E2E"
-                strokeWidth={1.5}
-                fill="url(#vol)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+      {!o && !overview.error && (
+        <div className="space-y-6">
+          <MetricSkeletons count={6} />
+          <ChartSkeleton />
+          <ChartSkeleton />
         </div>
-      </section>
-
-      <section className="mt-14">
-        <div className="flex items-baseline justify-between border-b border-rule-strong pb-2">
-          <h2 className="text-h3 font-semibold">What matters most</h2>
-          <Link to="/insights" className="text-small text-oxblood underline underline-offset-4">
-            All {insights.data.length} insights
-          </Link>
-        </div>
-        <ol>
-          {top.map((i) => (
-            <li key={i.id}>
-              <Link to={`/insights/${i.id}`} className="ledger-row block">
-                <PriorityBar value={i.priority} />
-                <div className="relative flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="tabular font-mono text-small text-ink-faint">
-                    {String(i.rank).padStart(2, "0")}
-                  </span>
-                  <span className="text-lead">{i.name}</span>
-                  <TrendTag state={i.trend} />
-                </div>
-                <div className="relative mt-1 flex gap-5 pl-8 text-micro text-ink-faint">
-                  <span className="tabular">{i.queryCount} questions</span>
-                  <span className="tabular">{growthLabel(i.growth)}</span>
-                  <span className="tabular">confidence {i.meanConfidence.toFixed(2)}</span>
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      {emerging.length > 0 && (
-        <section className="mt-14 max-w-measure border-l-2 border-ochre pl-5">
-          <h2 className="text-h3 font-semibold">Worth catching early</h2>
-          <p className="mt-2 text-ink-soft">
-            These topics are small enough that a volume-ranked view would bury them, but each one grew
-            sharply against the previous period.
-          </p>
-          <ul className="mt-4 space-y-2">
-            {emerging.map((i) => (
-              <li key={i.id} className="text-small">
-                <Link to={`/insights/${i.id}`} className="underline underline-offset-4 hover:text-oxblood">
-                  {i.name}
-                </Link>
-                <span className="tabular ml-2 text-ink-faint">
-                  {i.previousQueryCount} → {i.queryCount}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
       )}
-    </Page>
+
+      {o && o.queryCount === 0 && (
+        <EmptyState
+          title="No conversations yet"
+          description="Once customers start asking the assistant questions, this page shows what they asked and how well your sources answered."
+          action={<Button onClick={runAnalytics} busy={running}>Run analytics</Button>}
+        />
+      )}
+
+      {o && o.queryCount > 0 && (
+        <div className="space-y-6">
+          <MetricGrid>
+            <MetricCard label="Conversations" value={o.conversationCount.toLocaleString()} note="Distinct chat sessions" />
+            <MetricCard label="Questions" value={o.queryCount.toLocaleString()} note="Customer turns logged" />
+            <MetricCard label="Topics" value={String(o.topicCount)} note="Found by clustering the questions" />
+            <MetricCard
+              label="Unanswered"
+              value={pct(o.unansweredRate, 1)}
+              note="Retrieval confidence below 40%"
+              tone="oxblood"
+            />
+            <MetricCard
+              label="Confidence"
+              value={pct(o.meanConfidence)}
+              note="Mean across every answer"
+              tone={o.meanConfidence < 0.5 ? "oxblood" : "olive"}
+            />
+            <MetricCard label="Emerging" value={String(o.emergingCount)} note="New or rising sharply" tone="ochre" />
+          </MetricGrid>
+
+          <QuestionVolumeChart data={o.volumeByPeriod} />
+          <ConfidenceChart data={o.volumeByPeriod} />
+
+          {insights.data ? (
+            <div className="pt-4">
+              <AtAGlance overview={o} insights={insights.data} />
+            </div>
+          ) : insights.error ? (
+            <ErrorState message={insights.error} onRetry={insights.reload} />
+          ) : (
+            <MetricSkeletons count={3} />
+          )}
+        </div>
+      )}
+    </PageContainer>
   );
 }
