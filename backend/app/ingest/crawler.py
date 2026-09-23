@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse, urldefrag
 
@@ -48,7 +49,15 @@ def _worth_following(url: str) -> bool:
     return lowered.startswith("http")
 
 
-def crawl(entry_url: str) -> list[Page]:
+def crawl(
+    entry_url: str,
+    max_pages: int | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    on_page: Callable[[int], None] | None = None,
+) -> list[Page]:
+    """Breadth-first crawl. `should_stop` is checked before every request, so a
+    stop takes effect within one page. `on_page` receives the running count."""
+    limit = max_pages or settings.crawl_max_pages
     seen: set[str] = set()
     queue: list[tuple[str, int]] = [(urldefrag(entry_url)[0], 0)]
     pages: list[Page] = []
@@ -57,7 +66,10 @@ def crawl(entry_url: str) -> list[Page]:
     with httpx.Client(
         follow_redirects=True, timeout=settings.crawl_timeout_seconds, headers=headers
     ) as client:
-        while queue and len(pages) < settings.crawl_max_pages:
+        while queue and len(pages) < limit:
+            if should_stop and should_stop():
+                log.info("Crawl of %s stopped after %d pages", entry_url, len(pages))
+                break
             url, depth = queue.pop(0)
             if url in seen or depth > settings.crawl_max_depth:
                 continue
@@ -77,6 +89,8 @@ def crawl(entry_url: str) -> list[Page]:
             soup = BeautifulSoup(response.text, "lxml")
             title = soup.title.get_text(strip=True) if soup.title else url
             pages.append(Page(url=url, title=title, html=response.text))
+            if on_page:
+                on_page(len(pages))
 
             if depth < settings.crawl_max_depth:
                 for anchor in soup.find_all("a", href=True):

@@ -7,8 +7,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db import create_tables
-from app.routers import chat, insights, sources
+from app.migrate import upgrade
+from app.models import DEFAULT_WORKSPACE_ID
+from app.routers import chat, insights, research, sources, workspaces
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,8 +21,14 @@ log = logging.getLogger("knowledgepulse")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    create_tables()
+    upgrade()
     log.info("Database ready at %s", settings.database_url)
+    try:
+        from app import vector_store
+
+        vector_store.backfill_workspace(DEFAULT_WORKSPACE_ID)
+    except Exception as exc:  # noqa: BLE001 - the API should still start
+        log.warning("Could not tag existing chunks with a workspace: %s", exc)
     log.info("Language model provider: %s", settings.llm_provider)
     yield
 
@@ -45,9 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(workspaces.router)
 app.include_router(sources.router)
 app.include_router(chat.router)
 app.include_router(insights.router)
+app.include_router(research.router)
 
 
 @app.get("/api/health")

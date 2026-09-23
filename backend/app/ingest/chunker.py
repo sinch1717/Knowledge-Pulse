@@ -40,6 +40,36 @@ class RawChunk:
 # Splitting into sections
 # --------------------------------------------------------------------------
 
+@dataclass
+class Block:
+    """One readable element of a page, in document order."""
+
+    kind: str  # "heading" | "text" | "code"
+    text: str
+    level: int = 0  # heading level, 1-4
+
+
+def iter_blocks(soup: BeautifulSoup) -> list[Block]:
+    """Headings and text blocks in reading order, each piece of text exactly once.
+
+    `find_all` matches an element and everything nested inside it, so an <li>
+    wrapping a <p> used to contribute its text twice. An element is skipped when
+    one of its ancestors is already a block, which keeps the outer one.
+    """
+    blocks: list[Block] = []
+    for element in soup.find_all(list(HEADINGS) + list(BLOCKS)):
+        if element.name in BLOCKS and element.find_parent(list(BLOCKS)) is not None:
+            continue
+        text = element.get_text(" ", strip=True)
+        if not text:
+            continue
+        if element.name in HEADINGS:
+            blocks.append(Block("heading", text, int(element.name[1])))
+        else:
+            blocks.append(Block("code" if element.name == "pre" else "text", text))
+    return blocks
+
+
 def sections_from_html(soup: BeautifulSoup) -> list[Section]:
     path: list[str] = []
     buffer: list[str] = []
@@ -51,20 +81,16 @@ def sections_from_html(soup: BeautifulSoup) -> list[Section]:
             out.append(Section(heading_path=" › ".join(path) or "Introduction", text=body))
         buffer.clear()
 
-    for element in soup.find_all(list(HEADINGS) + list(BLOCKS)):
-        text = element.get_text(" ", strip=True)
-        if not text:
-            continue
-        if element.name in HEADINGS:
+    for block in iter_blocks(soup):
+        if block.kind == "heading":
             flush()
-            level = int(element.name[1])
-            path[:] = path[: level - 1]
-            while len(path) < level - 1:
+            path[:] = path[: block.level - 1]
+            while len(path) < block.level - 1:
                 path.append("")
-            path.append(text)
+            path.append(block.text)
             path[:] = [p for p in path if p]
         else:
-            buffer.append(text)
+            buffer.append(block.text)
 
     flush()
     return out
@@ -80,9 +106,18 @@ def sections_from_plain(text: str, title: str) -> list[Section]:
 # Windowing long sections
 # --------------------------------------------------------------------------
 
-def chunk_sections(sections: list[Section], url: str | None = None) -> list[RawChunk]:
-    target = settings.chunk_target_words
-    overlap = settings.chunk_overlap_words
+def chunk_sections(
+    sections: list[Section],
+    url: str | None = None,
+    target: int | None = None,
+    overlap: int | None = None,
+) -> list[RawChunk]:
+    """`target` and `overlap` are in words. Omitted, they come from config, so a
+    workspace can override them without touching the global default."""
+    target = target or settings.chunk_target_words
+    overlap = settings.chunk_overlap_words if overlap is None else overlap
+    # An overlap as large as the window would never advance.
+    overlap = max(0, min(overlap, target - 1))
     chunks: list[RawChunk] = []
 
     # Merge consecutive short sections under the same heading rather than

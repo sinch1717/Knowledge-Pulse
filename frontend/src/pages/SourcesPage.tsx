@@ -12,12 +12,20 @@ import {
   RowSkeletons,
 } from "@/components/ui";
 import { useToast } from "@/components/toast";
-import { AddSourceDialog, BackendStatus, SourceCard, isProcessing } from "@/components/sources/parts";
+import {
+  AddSourceDialog,
+  BackendStatus,
+  ChunkSettingsNote,
+  SourceCard,
+  isProcessing,
+} from "@/components/sources/parts";
+import { useWorkspace } from "@/components/workspace";
 
-const POLL_MS = 4000;
+const POLL_MS = 3000;
 
 export function SourcesPage() {
   const toast = useToast();
+  const { current: workspace, refresh: refreshWorkspaces, openSettings } = useWorkspace();
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backend, setBackend] = useState<BackendState | null>(null);
@@ -44,12 +52,17 @@ export function SourcesPage() {
   useEffect(() => {
     if (!anyProcessing || usingMockData) return;
     const timer = setInterval(load, POLL_MS);
-    return () => clearInterval(timer);
-  }, [anyProcessing, load]);
+    return () => {
+      clearInterval(timer);
+      // Processing just finished: chunk counts in the workspace menu are stale.
+      void refreshWorkspaces();
+    };
+  }, [anyProcessing, load, refreshWorkspaces]);
 
   function added(created: Source) {
     setSources((s) => [created, ...(s ?? [])]);
     setAdding(false);
+    void refreshWorkspaces();
     toast(`Added ${created.label}. It will be ready to answer from once indexing finishes.`, "success");
   }
 
@@ -83,6 +96,29 @@ export function SourcesPage() {
     }
   }
 
+  async function stop(source: Source) {
+    setBusyId(source.id);
+    try {
+      await api.stopSource(source.id);
+      setSources(
+        (all) =>
+          all?.map((s) =>
+            s.id === source.id ? { ...s, status: usingMockData ? (s.chunkCount ? "ready" : "stopped") : "stopping" } : s,
+          ) ?? null,
+      );
+      toast(
+        source.chunkCount
+          ? `Stopping ${source.label}. It keeps its previous index.`
+          : `Stopping ${source.label}. Nothing partial is written to the index.`,
+        "info",
+      );
+    } catch (e) {
+      toast(`Could not stop ${source.label}. ${(e as Error).message}`, "error");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function confirmDelete() {
     if (!toDelete) return;
     const target = toDelete;
@@ -91,6 +127,7 @@ export function SourcesPage() {
       await api.deleteSource(target.id);
       setSources((all) => all?.filter((s) => s.id !== target.id) ?? null);
       toast(`Deleted ${target.label}.`, "success");
+      void refreshWorkspaces();
       setToDelete(null);
     } catch (e) {
       toast(`Could not delete ${target.label}. ${(e as Error).message}`, "error");
@@ -103,8 +140,24 @@ export function SourcesPage() {
     <PageContainer>
       <PageHeader
         title="Sources"
-        description="Manage the knowledge used by KnowledgePulse."
-        meta={<BackendStatus state={backend} />}
+        description={
+          workspace
+            ? `Manage the knowledge used by KnowledgePulse in ${workspace.name}.`
+            : "Manage the knowledge used by KnowledgePulse."
+        }
+        meta={
+          <div className="space-y-2">
+            <BackendStatus state={backend} />
+            {workspace && (
+              <ChunkSettingsNote
+                target={workspace.chunkTargetWords}
+                overlap={workspace.chunkOverlapWords}
+                pages={workspace.crawlMaxPages}
+                onChange={openSettings}
+              />
+            )}
+          </div>
+        }
         actions={
           <Button onClick={() => setAdding(true)}>
             <Plus size={14} aria-hidden />
@@ -138,6 +191,7 @@ export function SourcesPage() {
               busy={busyId === s.id}
               onReindex={() => reindex(s)}
               onDelete={() => setToDelete(s)}
+              onStop={() => stop(s)}
             />
           ))}
         </div>

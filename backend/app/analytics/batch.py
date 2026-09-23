@@ -21,6 +21,7 @@ from app import embeddings
 from app.analytics import clustering, recommend, trends
 from app.config import settings
 from app.models import (
+    DEFAULT_WORKSPACE_ID,
     ClusterMember,
     Conversation,
     Message,
@@ -41,12 +42,16 @@ def previous_period(period: str) -> str:
     return f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
 
 
-def run_batch(db: Session, period: str) -> Report | None:
-    log.info("Analytics batch starting for %s", period)
+def run_batch(db: Session, period: str, workspace_id: str = DEFAULT_WORKSPACE_ID) -> Report | None:
+    log.info("Analytics batch starting for %s in %s", period, workspace_id)
 
     questions = (
         db.query(Message)
-        .filter(Message.role == "customer", Message.period == period)
+        .filter(
+            Message.workspace_id == workspace_id,
+            Message.role == "customer",
+            Message.period == period,
+        )
         .order_by(Message.created_at)
         .all()
     )
@@ -54,7 +59,7 @@ def run_batch(db: Session, period: str) -> Report | None:
         log.warning("Only %d questions in %s; nothing to analyse", len(questions), period)
         return None
 
-    _clear_period(db, period)
+    _clear_period(db, period, workspace_id)
 
     texts = [q.text for q in questions]
     confidences = [q.confidence if q.confidence is not None else 0.0 for q in questions]
@@ -68,7 +73,12 @@ def run_batch(db: Session, period: str) -> Report | None:
         return None
 
     prior = (
-        db.query(TopicCluster).filter(TopicCluster.period == previous_period(period)).all()
+        db.query(TopicCluster)
+        .filter(
+            TopicCluster.workspace_id == workspace_id,
+            TopicCluster.period == previous_period(period),
+        )
+        .all()
     )
     max_volume = max(len(c.indices) for c in clusters)
 
@@ -81,6 +91,7 @@ def run_batch(db: Session, period: str) -> Report | None:
 
         row = TopicCluster(
             id=new_id("ins"),
+            workspace_id=workspace_id,
             period=period,
             name=cluster.name,
             keywords=cluster.keywords,
@@ -110,35 +121,47 @@ def run_batch(db: Session, period: str) -> Report | None:
         row.rank = position
     db.commit()
 
-    report = _build_report(db, period, rows, questions)
+    report = _build_report(db, period, rows, questions, workspace_id)
     log.info("Batch complete: %d topics, %d recommendations", len(rows), len(report.recommendations))
     return report
 
 
-def _clear_period(db: Session, period: str) -> None:
-    old_clusters = db.query(TopicCluster).filter(TopicCluster.period == period).all()
+def _clear_period(db: Session, period: str, workspace_id: str) -> None:
+    old_clusters = (
+        db.query(TopicCluster)
+        .filter(TopicCluster.workspace_id == workspace_id, TopicCluster.period == period)
+        .all()
+    )
     for cluster in old_clusters:
         db.delete(cluster)
-    for old_report in db.query(Report).filter(Report.period == period).all():
+    old_reports = (
+        db.query(Report).filter(Report.workspace_id == workspace_id, Report.period == period).all()
+    )
+    for old_report in old_reports:
         db.delete(old_report)
     db.commit()
 
 
 def _build_report(
-    db: Session, period: str, rows: list[TopicCluster], questions: list[Message]
+    db: Session,
+    period: str,
+    rows: list[TopicCluster],
+    questions: list[Message],
+    workspace_id: str,
 ) -> Report:
     low = sum(1 for q in questions if (q.confidence or 0) < settings.low_confidence_threshold)
     unanswered_rate = round(low / len(questions), 4)
 
     conversation_count = (
         db.query(func.count(func.distinct(Message.conversation_id)))
-        .filter(Message.period == period)
+        .filter(Message.workspace_id == workspace_id, Message.period == period)
         .scalar()
         or 0
     )
 
     report = Report(
         id=new_id("rep"),
+        workspace_id=workspace_id,
         period=period,
         generated_at=datetime.now(timezone.utc),
         conversation_count=conversation_count,
@@ -178,22 +201,25 @@ def _sample_questions(db: Session, cluster_id: str, limit: int = 5) -> list[str]
     return [r[0] for r in result]
 
 
-def latest_period(db: Session) -> str | None:
-    row = db.query(func.max(Message.period)).scalar()
+def latest_period(db: Session, workspace_id: str = DEFAULT_WORKSPACE_ID) -> str | None:
+    row = db.query(func.max(Message.period)).filter(Message.workspace_id == workspace_id).scalar()
     return row or None
 
 
-def run_for_all_periods(db: Session) -> list[Report]:
+def run_for_all_periods(db: Session, workspace_id: str = DEFAULT_WORKSPACE_ID) -> list[Report]:
     """Used after seeding, when several months arrive at once. Order matters —
     each period needs the previous one already clustered to compute growth."""
     periods = [
         p[0]
-        for p in db.query(Message.period).filter(Message.role == "customer").distinct().order_by(Message.period)
+        for p in db.query(Message.period)
+        .filter(Message.workspace_id == workspace_id, Message.role == "customer")
+        .distinct()
+        .order_by(Message.period)
         if p[0]
     ]
     reports = []
     for period in periods:
-        report = run_batch(db, period)
+        report = run_batch(db, period, workspace_id)
         if report:
             reports.append(report)
     return reports

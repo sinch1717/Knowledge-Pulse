@@ -12,7 +12,9 @@ import {
   mockPeriods,
   mockReport,
   mockReportHistory,
+  mockResearch,
   mockSources,
+  mockWorkspaces,
 } from "@/mock/data";
 import type {
   BackendState,
@@ -24,14 +26,46 @@ import type {
   Overview,
   Report,
   ReportSummary,
+  ResearchSummary,
   Source,
   SourceKind,
+  Workspace,
+  WorkspaceInput,
 } from "@/lib/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 export const usingMockData = BASE === "";
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
+
+// ---- current workspace ---------------------------------------------------------
+// Every request carries X-Workspace-Id. The backend falls back to the default
+// workspace when the header is missing, so older clients keep working.
+
+const WORKSPACE_KEY = "kp.workspace";
+
+function readStoredWorkspace(): string {
+  try {
+    return localStorage.getItem(WORKSPACE_KEY) || "ws_default";
+  } catch {
+    return "ws_default";
+  }
+}
+
+let currentWorkspace = readStoredWorkspace();
+
+export const getWorkspaceId = () => currentWorkspace;
+
+export function setWorkspaceId(id: string) {
+  currentWorkspace = id;
+  try {
+    localStorage.setItem(WORKSPACE_KEY, id);
+  } catch {
+    // Private mode or storage disabled: the choice lasts for this session only.
+  }
+}
+
+const workspaceHeader = () => ({ "X-Workspace-Id": currentWorkspace });
 
 /** Turn a failed response into a readable message. FastAPI puts it in `detail`. */
 async function failure(res: Response): Promise<Error> {
@@ -47,15 +81,18 @@ async function get<T>(path: string, fallback: T): Promise<T> {
     await delay();
     return fallback;
   }
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: workspaceHeader() });
   if (!res.ok) throw await failure(res);
   return (await res.json()) as T;
 }
 
-async function send<T>(method: "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+async function send<T>(method: "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body instanceof FormData || body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers:
+      body instanceof FormData || body === undefined
+        ? workspaceHeader()
+        : { ...workspaceHeader(), "Content-Type": "application/json" },
     body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw await failure(res);
@@ -71,7 +108,66 @@ const kindFromFilename = (name: string): SourceKind => {
   return "text";
 };
 
+let mockWorkspaceList = [...mockWorkspaces];
+
 export const api = {
+  // ---- workspaces ------------------------------------------------------------
+
+  getWorkspaces: () => get<Workspace[]>("/api/workspaces", mockWorkspaceList),
+
+  createWorkspace: async (input: WorkspaceInput): Promise<Workspace> => {
+    if (usingMockData) {
+      await delay(400);
+      const created: Workspace = {
+        id: `ws_${Math.random().toString(36).slice(2, 8)}`,
+        name: input.name,
+        description: input.description ?? "",
+        chunkTargetWords: input.chunkTargetWords ?? 220,
+        chunkOverlapWords: input.chunkOverlapWords ?? 40,
+        crawlMaxPages: input.crawlMaxPages ?? 120,
+        usesDefaults: input.chunkTargetWords == null && input.chunkOverlapWords == null,
+        sourceCount: 0,
+        chunkCount: 0,
+        questionCount: 0,
+        createdAt: new Date().toISOString(),
+      };
+      mockWorkspaceList = [...mockWorkspaceList, created];
+      return created;
+    }
+    return send<Workspace>("POST", "/api/workspaces", input);
+  },
+
+  updateWorkspace: async (id: string, input: Partial<WorkspaceInput>): Promise<Workspace> => {
+    if (usingMockData) {
+      await delay(400);
+      const current = mockWorkspaceList.find((w) => w.id === id);
+      if (!current) throw new Error("No workspace with that id");
+      const updated: Workspace = {
+        ...current,
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.description !== undefined && { description: input.description }),
+        chunkTargetWords: input.chunkTargetWords ?? current.chunkTargetWords,
+        chunkOverlapWords: input.chunkOverlapWords ?? current.chunkOverlapWords,
+        crawlMaxPages: input.crawlMaxPages ?? current.crawlMaxPages,
+        usesDefaults: false,
+      };
+      mockWorkspaceList = mockWorkspaceList.map((w) => (w.id === id ? updated : w));
+      return updated;
+    }
+    return send<Workspace>("PATCH", `/api/workspaces/${id}`, input);
+  },
+
+  deleteWorkspace: async (id: string) => {
+    if (usingMockData) {
+      await delay(400);
+      mockWorkspaceList = mockWorkspaceList.filter((w) => w.id !== id);
+      return;
+    }
+    await send<unknown>("DELETE", `/api/workspaces/${id}`);
+  },
+
+  getResearch: () => get<ResearchSummary>("/api/research/latest", mockResearch),
+
   getOverview: () => get<Overview>("/api/overview", mockOverview),
 
   /** Reachability check for the Sources page. Never throws. */
@@ -87,7 +183,8 @@ export const api = {
 
   // ---- sources -------------------------------------------------------------
 
-  getSources: () => get<Source[]>("/api/sources", mockSources),
+  // In placeholder mode only the first workspace has sources, so switching is visible.
+  getSources: () => get<Source[]>("/api/sources", currentWorkspace === "ws_default" ? mockSources : []),
 
   addSource: async (payload: { kind: SourceKind; location: string; label?: string }) => {
     if (usingMockData) {
@@ -136,6 +233,15 @@ export const api = {
       return;
     }
     await send<unknown>("POST", `/api/sources/${id}/reindex`);
+  },
+
+  /** Ask a running crawl or index to stop. It finishes the page or batch it is on. */
+  stopSource: async (id: string) => {
+    if (usingMockData) {
+      await delay(400);
+      return;
+    }
+    await send<unknown>("POST", `/api/sources/${id}/stop`);
   },
 
   deleteSource: async (id: string) => {

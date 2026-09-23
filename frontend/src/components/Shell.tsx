@@ -1,11 +1,13 @@
 import { Outlet } from "react-router-dom";
 import { FeatureSubNav, MockDataNotice, PrimaryNavbar } from "@/components/layout";
 import { ToastProvider } from "@/components/toast";
+import { WorkspaceProvider } from "@/components/workspace";
 
 /** AuthenticatedLayout: top bar, feature tabs, then the page. */
 export function Shell() {
   return (
     <ToastProvider>
+      <WorkspaceProvider>
       <div className="flex min-h-screen flex-col">
         <header className="sticky top-0 z-30">
           <PrimaryNavbar />
@@ -16,6 +18,7 @@ export function Shell() {
           <Outlet />
         </main>
       </div>
+      </WorkspaceProvider>
     </ToastProvider>
   );
 }

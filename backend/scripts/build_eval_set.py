@@ -20,8 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import llm  # noqa: E402
-from app.db import SessionLocal, create_tables  # noqa: E402
-from app.models import Chunk  # noqa: E402
+from app.db import SessionLocal  # noqa: E402
+from app.migrate import upgrade  # noqa: E402
+from app.models import Chunk, Source  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s | %(message)s",
                     datefmt="%H:%M:%S")
@@ -47,12 +48,18 @@ Do not return a JSON array. Do not include any other fields."""
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=50)
+    parser.add_argument("--workspace", default="ws_default")
     args = parser.parse_args()
 
-    create_tables()
+    upgrade()
     db = SessionLocal()
     try:
-        chunks = db.query(Chunk).filter(Chunk.word_count > 60).all()
+        chunks = (
+            db.query(Chunk)
+            .join(Source, Source.id == Chunk.source_id)
+            .filter(Chunk.word_count > 60, Source.workspace_id == args.workspace)
+            .all()
+        )
         if not chunks:
             raise SystemExit("Nothing indexed. Add a source first.")
 
@@ -84,7 +91,7 @@ def main() -> None:
             if len(questions) % 10 == 0:
                 log.info("%d/%d", len(questions), args.count)
 
-        out = Path("data/eval_set.json")
+        out = Path(f"data/eval_set_{args.workspace}.json")
         out.parent.mkdir(exist_ok=True)
         out.write_text(json.dumps(questions, indent=2))
         log.info("Wrote %d questions to %s", len(questions), out)

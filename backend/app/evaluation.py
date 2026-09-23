@@ -29,7 +29,7 @@ import time
 from sqlalchemy.orm import Session
 
 from app import llm
-from app.models import EvaluationRun
+from app.models import DEFAULT_WORKSPACE_ID, EvaluationRun
 from app.rag import engine
 
 log = logging.getLogger(__name__)
@@ -92,12 +92,14 @@ def load_question_set(path: str) -> list[str]:
     return [item["question"] if isinstance(item, dict) else str(item) for item in payload]
 
 
-def run_evaluation(db: Session, questions: list[str]) -> EvaluationRun:
+def run_evaluation(
+    db: Session, questions: list[str], workspace_id: str = DEFAULT_WORKSPACE_ID
+) -> EvaluationRun:
     scores = {"faithfulness": [], "answer_relevance": [], "context_relevance": []}
     failures: list[dict] = []
 
     for n, question in enumerate(questions, start=1):
-        hits, _ = engine.retrieve_only(question)
+        hits, _ = engine.retrieve_only(question, workspace_id)
         context = "\n\n".join(h["text"] for h in hits) or "(nothing retrieved)"
         try:
             answer = llm.complete(engine.build_prompt(question, hits), system=engine.SYSTEM_PROMPT)
@@ -127,6 +129,7 @@ def run_evaluation(db: Session, questions: list[str]) -> EvaluationRun:
 
     run = EvaluationRun(
         id=f"eval_{uuid.uuid4().hex[:10]}",
+        workspace_id=workspace_id,
         ran_at=datetime.now(timezone.utc),
         question_count=len(scores["faithfulness"]),
         faithfulness=mean(scores["faithfulness"]),

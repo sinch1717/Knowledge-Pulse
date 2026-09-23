@@ -19,13 +19,42 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Every pre-workspace row is migrated into this one, so existing data keeps working.
+DEFAULT_WORKSPACE_ID = "ws_default"
+
+
+class Workspace(Base):
+    """A fully separate profile: its own sources, conversations, topics and reports.
+
+    One organisation, or one documentation site in the research experiments. The
+    chunk settings are per workspace so two sites can be indexed differently.
+    """
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    # Null means "use the global default from config".
+    chunk_target_words: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_overlap_words: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crawl_max_pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+def _workspace_column() -> Mapped[str]:
+    return mapped_column(String(40), index=True, default=DEFAULT_WORKSPACE_ID)
+
+
 class Source(Base):
     __tablename__ = "sources"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     kind: Mapped[str] = mapped_column(String(16))  # website | pdf | docx | text
     label: Mapped[str] = mapped_column(String(200))
     location: Mapped[str] = mapped_column(Text)
+    # queued | crawling | indexing | ready | failed | stopping | stopped
     status: Mapped[str] = mapped_column(String(16), default="queued")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -55,6 +84,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     # Set for generated traffic so the archive can always be audited or filtered.
@@ -69,6 +99,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
@@ -90,6 +121,7 @@ class TopicCluster(Base):
     __tablename__ = "topic_clusters"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     period: Mapped[str] = mapped_column(String(16), index=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
     name: Mapped[str] = mapped_column(Text)
@@ -123,6 +155,7 @@ class Report(Base):
     __tablename__ = "reports"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     period: Mapped[str] = mapped_column(String(16), index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     conversation_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -158,6 +191,7 @@ class EvaluationRun(Base):
     __tablename__ = "evaluation_runs"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    workspace_id: Mapped[str] = _workspace_column()
     ran_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     question_count: Mapped[int] = mapped_column(Integer, default=0)
     faithfulness: Mapped[float] = mapped_column(Float, default=0.0)

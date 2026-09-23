@@ -1,0 +1,38 @@
+{
+  "plausible": {
+    "name": "Plausible Analytics docs",
+    "entry": "https://plausible.io/docs",
+    "include_prefix": "https://plausible.io/docs",
+    "exclude_regex": "",
+    "content_selector": "article",
+    "strip_selectors": [".hash-link", ".theme-doc-footer", ".pagination-nav", ".theme-doc-breadcrumbs", ".theme-doc-toc-mobile", ".theme-edit-this-page"],
+    "max_pages": 250
+  },
+  "fastapi": {
+    "name": "FastAPI docs",
+    "entry": "https://fastapi.tiangolo.com/",
+    "include_prefix": "https://fastapi.tiangolo.com/",
+    "exclude_regex": "^https://fastapi\\.tiangolo\\.com/(?:[a-z]{2}(?:-[a-z]+)?|release-notes|reference)(?:/|$)",
+    "content_selector": "article.md-content__inner",
+    "strip_selectors": ["a.headerlink", ".md-source-file", ".md-content__button"],
+    "max_pages": 250
+  },
+  "docusaurus": {
+    "name": "Docusaurus docs",
+    "entry": "https://docusaurus.io/docs",
+    "include_prefix": "https://docusaurus.io/docs",
+    "exclude_regex": "/docs/(?:next|\\d+\\.\\d+(?:\\.\\d+)?|\\d+\\.x)(?:/|$)",
+    "content_selector": "article",
+    "strip_selectors": [".hash-link", ".theme-doc-footer", ".pagination-nav", ".theme-doc-breadcrumbs", ".theme-doc-toc-mobile", ".theme-edit-this-page"],
+    "max_pages": 250
+  },
+  "plaid": {
+    "name": "Plaid documentation",
+    "entry": "https://plaid.com/docs/",
+    "include_prefix": "https://plaid.com/docs/",
+    "exclude_regex": "/(?:search|llms\\.txt)",
+    "content_selector": "main",
+    "strip_selectors": [],
+    "max_pages": 250
+  }
+}

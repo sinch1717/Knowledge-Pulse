@@ -2,7 +2,7 @@
 // Keep them in sync with the Pydantic schemas once the backend lands.
 
 export type SourceKind = "website" | "pdf" | "docx" | "text";
-export type SourceStatus = "queued" | "crawling" | "indexing" | "ready" | "failed";
+export type SourceStatus = "queued" | "crawling" | "indexing" | "ready" | "failed" | "stopping" | "stopped";
 
 export interface Source {
   id: string;
@@ -124,3 +124,113 @@ export interface ReportSummary {
 
 /** "mock" when running on placeholder data, otherwise whether the API answered. */
 export type BackendState = "mock" | "connected" | "unreachable";
+
+/** A fully separate profile: its own sources, chats, insights and reports. */
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  chunkTargetWords: number;
+  chunkOverlapWords: number;
+  crawlMaxPages: number;
+  usesDefaults: boolean;
+  sourceCount: number;
+  chunkCount: number;
+  questionCount: number;
+  createdAt: string;
+}
+
+export interface WorkspaceInput {
+  name: string;
+  description?: string;
+  chunkTargetWords?: number | null;
+  chunkOverlapWords?: number | null;
+  crawlMaxPages?: number | null;
+}
+
+// ---- research experiment (python -m research.run) ---------------------------
+
+export interface ResearchRetrieval {
+  answerable: number;
+  unanswerable: number;
+  hit1: number | null;
+  hitk: number | null;
+  mrr: number | null;
+  recallk: number | null;
+  page_hitk: number | null;
+  context_words: number | null;
+  mean_conf_answerable: number | null;
+  mean_conf_unanswerable: number | null;
+  auroc: number | null;
+  tau: number;
+  false_gap: number | null;
+  missed_gap: number | null;
+  balanced_accuracy: number | null;
+  best_tau: number | null;
+}
+
+export interface ResearchChunkStats {
+  chunks: number;
+  words: { mean: number; median: number; p10: number; p90: number };
+  tiny_rate: number;
+  cross_section_rate: number;
+  code_blocks: number;
+  code_split_rate: number | null;
+}
+
+export interface ResearchResult {
+  site: string;
+  config: string;
+  chunker: string;
+  size: number;
+  chunk_stats: ResearchChunkStats;
+  retrieval: ResearchRetrieval;
+}
+
+export interface ResearchSite {
+  site: string;
+  name: string;
+  generator: string;
+  pages: number;
+  words: number;
+  crawled_at: string;
+  questions: number;
+  review: { generated: number; reviewed: number; accepted_of_reviewed: number; acceptance_rate: number | null };
+}
+
+export interface ResearchComparison {
+  site: string;
+  config: string;
+  baseline: string;
+  metric: string;
+  mean_diff: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  significant: boolean;
+}
+
+export interface ResearchTransfer {
+  config: string;
+  from: string;
+  to: string;
+  tau: number;
+  balanced_transferred: number | null;
+  balanced_own: number | null;
+}
+
+export interface ResearchSummary {
+  run_id: string;
+  created_at: string;
+  embedding_model: string;
+  k: number;
+  tau: number;
+  overlap: number;
+  sizes: number[];
+  chunkers: string[];
+  relevance_threshold: number;
+  containment_threshold: number;
+  sites: ResearchSite[];
+  results: ResearchResult[];
+  comparisons: ResearchComparison[];
+  transfer: ResearchTransfer[];
+}

@@ -9,6 +9,7 @@ import { ReportPage } from "@/pages/ReportPage";
 import { AskPage } from "@/pages/AskPage";
 import { SourcesPage } from "@/pages/SourcesPage";
 import { EvaluationPage } from "@/pages/EvaluationPage";
+import { ResearchPage } from "@/pages/ResearchPage";
 import "./index.css";
 
 const router = createBrowserRouter([
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: "ask", element: <AskPage /> },
       { path: "sources", element: <SourcesPage /> },
       { path: "evaluation", element: <EvaluationPage /> },
+      { path: "research", element: <ResearchPage /> },
     ],
   },
 ]);

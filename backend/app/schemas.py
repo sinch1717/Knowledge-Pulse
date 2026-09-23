@@ -133,3 +133,33 @@ class OverviewOut(Base):
     meanConfidence: float
     emergingCount: int
     volumeByPeriod: list[TrendPointOut]
+
+
+class WorkspaceOut(Base):
+    id: str
+    name: str
+    description: str
+    chunkTargetWords: int
+    chunkOverlapWords: int
+    crawlMaxPages: int
+    usesDefaults: bool
+    sourceCount: int
+    chunkCount: int
+    questionCount: int
+    createdAt: datetime
+
+
+class WorkspaceCreate(Base):
+    name: str
+    description: str = ""
+    chunkTargetWords: int | None = None
+    chunkOverlapWords: int | None = None
+    crawlMaxPages: int | None = None
+
+
+class WorkspaceUpdate(Base):
+    name: str | None = None
+    description: str | None = None
+    chunkTargetWords: int | None = None
+    chunkOverlapWords: int | None = None
+    crawlMaxPages: int | None = None

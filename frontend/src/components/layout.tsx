@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 import clsx from "clsx";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { usingMockData } from "@/lib/api";
+import { useWorkspace } from "@/components/workspace";
 
 const accountName = import.meta.env.VITE_ACCOUNT_NAME || "Sinchana";
 
@@ -13,6 +14,7 @@ export const features = [
   { to: "/ask", label: "Ask" },
   { to: "/sources", label: "Sources" },
   { to: "/evaluation", label: "Evaluation" },
+  { to: "/research", label: "Research" },
 ];
 
 const services = [
@@ -20,6 +22,7 @@ const services = [
   { to: "/insights", label: "Customer insights", note: "Ranks what customers are stuck on" },
   { to: "/report", label: "Client report", note: "Turns insights into actions for your team" },
   { to: "/sources", label: "Knowledge sources", note: "Websites and documents the assistant reads" },
+  { to: "/research", label: "Chunking research", note: "How chunking changes retrieval across doc sites" },
 ];
 
 /** A small popover menu that closes on outside click and Escape. */
@@ -78,16 +81,87 @@ function Menu({
   );
 }
 
+function WorkspaceSwitcher() {
+  const { workspaces, current, select, openCreate, openSettings } = useWorkspace();
+  return (
+    <Menu
+      align="left"
+      label={
+        <span className="flex max-w-[11rem] flex-col items-start leading-tight sm:max-w-[16rem]">
+          <span className="text-micro text-ink-faint">Workspace</span>
+          <span className="truncate font-medium text-ink">{current?.name ?? "Loading"}</span>
+        </span>
+      }
+    >
+      {(close) => (
+        <>
+          <p className="px-4 pb-1 pt-1 text-micro text-ink-faint">Switch workspace</p>
+          {workspaces.map((w) => (
+            <button
+              key={w.id}
+              role="menuitemradio"
+              aria-checked={w.id === current?.id}
+              onClick={() => {
+                select(w.id);
+                close();
+              }}
+              className="flex w-full items-start gap-2 px-4 py-2 text-left hover:bg-paper"
+            >
+              <Check size={14} className={clsx("mt-1 shrink-0", w.id === current?.id ? "text-oxblood" : "invisible")} aria-hidden />
+              <span className="min-w-0">
+                <span className="block truncate text-small font-medium text-ink">{w.name}</span>
+                <span className="block text-micro text-ink-faint">
+                  {w.sourceCount} {w.sourceCount === 1 ? "source" : "sources"}, {w.chunkCount.toLocaleString()} chunks,{" "}
+                  {w.questionCount.toLocaleString()} questions
+                </span>
+              </span>
+            </button>
+          ))}
+          <div className="mt-1 border-t border-rule pt-1">
+            <button
+              role="menuitem"
+              onClick={() => {
+                close();
+                openCreate();
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2 text-left text-small hover:bg-paper"
+            >
+              <Plus size={14} aria-hidden />
+              New workspace
+            </button>
+            <button
+              role="menuitem"
+              onClick={() => {
+                close();
+                openSettings();
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2 text-left text-small hover:bg-paper"
+            >
+              <Settings size={14} aria-hidden />
+              Settings for {current?.name ?? "this workspace"}
+            </button>
+          </div>
+        </>
+      )}
+    </Menu>
+  );
+}
+
 export function PrimaryNavbar() {
   return (
     <div className="border-b border-rule bg-paper-sunk">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-5 md:px-10">
-        <Link to="/" className="flex items-baseline gap-0.5" aria-label="KnowledgePulse home">
-          <span className="font-display text-h3 font-semibold tracking-tight">Knowledge</span>
-          <span className="font-display text-h3 text-oxblood">Pulse</span>
-        </Link>
+        <div className="flex min-w-0 items-center gap-3 sm:gap-5">
+          <Link to="/" className="flex shrink-0 items-baseline gap-0.5" aria-label="KnowledgePulse home">
+            <span className="font-display text-h3 font-semibold tracking-tight">Knowledge</span>
+            <span className="font-display text-h3 text-oxblood">Pulse</span>
+          </Link>
+          <span aria-hidden className="hidden h-6 w-px bg-rule-strong sm:block" />
+          <WorkspaceSwitcher />
+        </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="hidden sm:block">
           <Menu label="Services">
             {(close) =>
               services.map((s) => (
@@ -104,6 +178,7 @@ export function PrimaryNavbar() {
               ))
             }
           </Menu>
+          </div>
 
           <Menu
             label={

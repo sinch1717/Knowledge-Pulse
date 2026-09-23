@@ -9,7 +9,10 @@ import type {
   Overview,
   Report,
   ReportSummary,
+  ResearchResult,
+  ResearchSummary,
   Source,
+  Workspace,
 } from "@/lib/types";
 
 export const mockSources: Source[] = [
@@ -45,6 +48,17 @@ export const mockSources: Source[] = [
     chunkCount: 54,
     lastIndexedAt: "2026-08-27T11:24:00Z",
     contentHash: "0c9be3aa",
+  },
+  {
+    id: "src_05",
+    kind: "website",
+    label: "Kestrel API reference",
+    location: "https://api.kestrel.example/reference",
+    status: "crawling",
+    pageCount: 37,
+    chunkCount: 0,
+    lastIndexedAt: null,
+    contentHash: null,
   },
   {
     id: "src_04",
@@ -424,3 +438,112 @@ export const mockReportHistory: ReportSummary[] = [
       "First full period. Most questions were about invoice editing and GST on export invoices, and retrieval held up on everything except the export fields.",
   },
 ];
+
+export const mockWorkspaces: Workspace[] = [
+  {
+    id: "ws_default",
+    name: "Kestrel",
+    description: "Invoicing product documentation",
+    chunkTargetWords: 220,
+    chunkOverlapWords: 40,
+    crawlMaxPages: 120,
+    usesDefaults: true,
+    sourceCount: 4,
+    chunkCount: 1954,
+    questionCount: 947,
+    createdAt: "2026-06-01T00:00:00Z",
+  },
+  {
+    id: "ws_fastapi",
+    name: "FastAPI docs",
+    description: "Research site: MkDocs Material",
+    chunkTargetWords: 400,
+    chunkOverlapWords: 60,
+    crawlMaxPages: 250,
+    usesDefaults: false,
+    sourceCount: 0,
+    chunkCount: 0,
+    questionCount: 0,
+    createdAt: "2026-09-21T00:00:00Z",
+  },
+];
+
+// Placeholder experiment, shaped like data/research/results/latest.json. The
+// numbers are invented for layout only; run `python -m research.run` for real ones.
+const mockResult = (site: string, chunker: string, base: number, chunks: number, cross: number): ResearchResult => ({
+  site,
+  config: `${chunker}@220`,
+  chunker,
+  size: 220,
+  chunk_stats: {
+    chunks,
+    words: { mean: chunker === "fixed" ? 214 : 158, median: chunker === "fixed" ? 220 : 149, p10: chunker === "fixed" ? 220 : 42, p90: 220 },
+    tiny_rate: chunker === "fixed" ? 0.01 : chunker === "recursive" ? 0.06 : 0.14,
+    cross_section_rate: cross,
+    code_blocks: site === "fastapi" ? 412 : 61,
+    code_split_rate: chunker === "fixed" ? 0.31 : chunker === "recursive" ? 0.12 : 0.05,
+  },
+  retrieval: {
+    answerable: 96,
+    unanswerable: 50,
+    hit1: base - 0.12,
+    hitk: base + 0.14,
+    mrr: base,
+    recallk: base + 0.09,
+    page_hitk: base + 0.2,
+    context_words: chunker === "fixed" ? 1070 : 790,
+    mean_conf_answerable: 0.58 + base / 10,
+    mean_conf_unanswerable: 0.27,
+    auroc: 0.86 + base / 10,
+    tau: 0.4,
+    false_gap: 0.19 - base / 10,
+    missed_gap: 0.08,
+    balanced_accuracy: 0.87,
+    best_tau: 0.43,
+  },
+});
+
+export const mockResearch: ResearchSummary = {
+  run_id: "placeholder",
+  created_at: "2026-09-21T12:00:00Z",
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2",
+  k: 5,
+  tau: 0.4,
+  overlap: 40,
+  sizes: [220],
+  chunkers: ["fixed", "recursive", "heading", "heading_ctx"],
+  relevance_threshold: 0.5,
+  containment_threshold: 0.7,
+  sites: [
+    {
+      site: "plausible", name: "Plausible Analytics docs", generator: "Docusaurus", pages: 112, words: 61840,
+      crawled_at: "2026-09-21T09:00:00Z", questions: 96,
+      review: { generated: 100, reviewed: 30, accepted_of_reviewed: 27, acceptance_rate: 0.9 },
+    },
+    {
+      site: "fastapi", name: "FastAPI docs", generator: "mkdocs-1.6.1, mkdocs-material-9.5", pages: 184, words: 214300,
+      crawled_at: "2026-09-21T09:20:00Z", questions: 97,
+      review: { generated: 100, reviewed: 30, accepted_of_reviewed: 28, acceptance_rate: 0.933 },
+    },
+  ],
+  results: [
+    mockResult("plausible", "fixed", 0.52, 402, 0.34),
+    mockResult("plausible", "recursive", 0.56, 431, 0.21),
+    mockResult("plausible", "heading", 0.61, 488, 0.02),
+    mockResult("plausible", "heading_ctx", 0.66, 488, 0.02),
+    mockResult("fastapi", "fixed", 0.44, 1210, 0.41),
+    mockResult("fastapi", "recursive", 0.49, 1302, 0.26),
+    mockResult("fastapi", "heading", 0.55, 1466, 0.03),
+    mockResult("fastapi", "heading_ctx", 0.62, 1466, 0.03),
+  ],
+  comparisons: [
+    { site: "plausible", config: "heading_ctx@220", baseline: "heading@220", metric: "MRR", mean_diff: 0.05, ci_low: 0.01, ci_high: 0.09, significant: true },
+    { site: "plausible", config: "fixed@220", baseline: "heading@220", metric: "MRR", mean_diff: -0.09, ci_low: -0.16, ci_high: -0.02, significant: true },
+    { site: "fastapi", config: "heading_ctx@220", baseline: "heading@220", metric: "MRR", mean_diff: 0.07, ci_low: 0.02, ci_high: 0.12, significant: true },
+    { site: "fastapi", config: "recursive@220", baseline: "heading@220", metric: "MRR", mean_diff: -0.06, ci_low: -0.13, ci_high: 0.01, significant: false },
+  ],
+  transfer: [
+    { config: "heading@220", from: "plausible", to: "fastapi", tau: 0.43, balanced_transferred: 0.84, balanced_own: 0.87 },
+    { config: "heading@220", from: "fastapi", to: "plausible", tau: 0.41, balanced_transferred: 0.86, balanced_own: 0.88 },
+  ],
+};

@@ -29,7 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import llm  # noqa: E402
-from app.db import SessionLocal, create_tables  # noqa: E402
+from app.db import SessionLocal  # noqa: E402
+from app.migrate import upgrade  # noqa: E402
 from app.models import Chunk, Source  # noqa: E402
 from app.rag import engine  # noqa: E402
 
@@ -68,8 +69,12 @@ The value of "questions" must be an array of strings.
 """
 
 
-def load_corpus_headings(db, limit: int = 60) -> tuple[str, str]:
-    source = db.query(Source).filter(Source.status == "ready").first()
+def load_corpus_headings(db, workspace_id: str, limit: int = 60) -> tuple[str, str]:
+    source = (
+        db.query(Source)
+        .filter(Source.status == "ready", Source.workspace_id == workspace_id)
+        .first()
+    )
     if source is None:
         raise SystemExit(
             "No indexed source found. Add and index a website first, then run this again."
@@ -178,12 +183,13 @@ def main() -> None:
     parser.add_argument("--questions", type=int, default=800)
     parser.add_argument("--periods", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true", help="Write the question set, do not replay it")
+    parser.add_argument("--workspace", default="ws_default", help="Workspace id to seed (see GET /api/workspaces)")
     args = parser.parse_args()
 
-    create_tables()
+    upgrade()
     db = SessionLocal()
     try:
-        label, headings = load_corpus_headings(db)
+        label, headings = load_corpus_headings(db, args.workspace)
         log.info("Generating traffic for: %s", label)
 
         today = datetime.now(timezone.utc).replace(day=15, hour=10, minute=0, second=0, microsecond=0)
@@ -225,8 +231,8 @@ def main() -> None:
             "topics": topics,
             "questions": {topics[i]["topic"]: qs for i, qs in pool.items()},
         }
-        (out_dir / "seed_questions.json").write_text(json.dumps(audit, indent=2))
-        log.info("Wrote data/seed_questions.json")
+        (out_dir / f"seed_questions_{args.workspace}.json").write_text(json.dumps(audit, indent=2))
+        log.info("Wrote data/seed_questions_%s.json", args.workspace)
 
         if args.dry_run:
             log.info("Dry run; not replaying through the chat endpoint")
@@ -257,13 +263,14 @@ def main() -> None:
                         session_id=f"seed_{uuid.uuid4().hex[:10]}",
                         synthetic=True,
                         created_at=when,
+                        workspace_id=args.workspace,
                     )
                     replayed += 1
                     if replayed % 25 == 0:
                         log.info("Replayed %d questions (%s)", replayed, period)
             log.info("Period %s done (%d/%d)", period, position + 1, len(periods))
 
-        log.info("Seeded %d conversations. Next: python scripts/run_analytics.py", replayed)
+        log.info("Seeded %d conversations. Next: python scripts/run_analytics.py --workspace %s", replayed, args.workspace)
     finally:
         db.close()
 

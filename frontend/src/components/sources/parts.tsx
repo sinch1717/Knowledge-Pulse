@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent } from "react";
 import clsx from "clsx";
-import { FileText, Globe, Loader2, UploadCloud } from "lucide-react";
+import { FileText, Globe, Loader2, Square, UploadCloud } from "lucide-react";
 import type { BackendState, Source, SourceKind, SourceStatus } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
 import { Button, Dialog, Panel, StatusBadge, inputClass, type Tone } from "@/components/ui";
@@ -13,9 +13,16 @@ const statusCopy: Record<SourceStatus, { label: string; tone: Tone }> = {
   indexing: { label: "Processing", tone: "ochre" },
   ready: { label: "Ready", tone: "olive" },
   failed: { label: "Failed", tone: "oxblood" },
+  stopping: { label: "Stopping", tone: "ochre" },
+  stopped: { label: "Stopped", tone: "ink" },
 };
 
-export const isProcessing = (s: SourceStatus) => s === "queued" || s === "crawling" || s === "indexing";
+/** Work is running (or winding down) for this source. */
+export const isProcessing = (s: SourceStatus) =>
+  s === "queued" || s === "crawling" || s === "indexing" || s === "stopping";
+
+/** Work can still be stopped. */
+export const isStoppable = (s: SourceStatus) => s === "queued" || s === "crawling" || s === "indexing";
 
 export function SourceStatusBadge({ status }: { status: SourceStatus }) {
   const s = statusCopy[status];
@@ -34,11 +41,20 @@ const kindLabel: Record<SourceKind, string> = {
   text: "Text file",
 };
 
-const progressCopy: Partial<Record<SourceStatus, string>> = {
-  queued: "Waiting to start...",
-  crawling: "Crawling pages...",
-  indexing: "Processing document...",
-};
+function progressText(s: Source): string {
+  switch (s.status) {
+    case "queued":
+      return "Waiting to start...";
+    case "crawling":
+      return s.pageCount ? `Crawling pages... ${s.pageCount} so far` : "Crawling pages...";
+    case "indexing":
+      return "Splitting into chunks and embedding...";
+    case "stopping":
+      return "Stopping after the current page or batch...";
+    default:
+      return "";
+  }
+}
 
 export function BackendStatus({ state }: { state: BackendState | null }) {
   const [dot, text] =
@@ -64,11 +80,13 @@ export function SourceCard({
   busy,
   onReindex,
   onDelete,
+  onStop,
 }: {
   source: Source;
   busy: boolean;
   onReindex: () => void;
   onDelete: () => void;
+  onStop: () => void;
 }) {
   const processing = isProcessing(s.status);
   const Icon = s.kind === "website" ? Globe : FileText;
@@ -88,7 +106,7 @@ export function SourceCard({
 
       <div className="mt-4 pl-[1.875rem]">
         {processing ? (
-          <p className="text-small text-ink-soft">{progressCopy[s.status]}</p>
+          <p className="text-small text-ink-soft">{progressText(s)}</p>
         ) : (
           <div className="tabular flex flex-wrap gap-x-5 gap-y-1 text-small text-ink-soft">
             <span>{s.pageCount.toLocaleString()} {s.pageCount === 1 ? "page" : "pages"}</span>
@@ -101,6 +119,15 @@ export function SourceCard({
 
         {s.error && (
           <p className="mt-3 border-l-2 border-oxblood pl-3 text-small text-oxblood-deep">{s.error}</p>
+        )}
+
+        {isStoppable(s.status) && (
+          <div className="mt-4 flex justify-end">
+            <Button variant="danger" onClick={onStop} disabled={busy}>
+              <Square size={12} aria-hidden />
+              Stop
+            </Button>
+          </div>
         )}
 
         {!processing && (
@@ -307,5 +334,29 @@ export function AddSourceDialog({
       </div>
       {tab === "website" ? <AddWebsiteForm onAdd={onAddWebsite} /> : <UploadDocumentForm onUpload={onUpload} />}
     </Dialog>
+  );
+}
+
+/** The chunk settings every new index in this workspace will use. */
+export function ChunkSettingsNote({
+  target,
+  overlap,
+  pages,
+  onChange,
+}: {
+  target: number;
+  overlap: number;
+  pages: number;
+  onChange: () => void;
+}) {
+  return (
+    <p className="text-small text-ink-soft">
+      New indexes use chunks of <span className="tabular font-medium text-ink">{target}</span> words with{" "}
+      <span className="tabular font-medium text-ink">{overlap}</span> words of overlap, and crawl up to{" "}
+      <span className="tabular font-medium text-ink">{pages}</span> pages.{" "}
+      <button onClick={onChange} className="text-oxblood underline underline-offset-4">
+        Change
+      </button>
+    </p>
   );
 }

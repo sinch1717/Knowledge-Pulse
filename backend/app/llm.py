@@ -96,7 +96,7 @@ def _groq(
 
     return content
 
-def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
+# def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
     if not settings.gemini_api_key:
         raise LLMError("GEMINI_API_KEY is not set")
     url = (
@@ -120,7 +120,63 @@ def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
         return payload["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError) as exc:
         raise LLMError(f"Unexpected Gemini response: {json.dumps(payload)[:300]}") from exc
+def _gemini(system: str, user: str, temperature: float, max_tokens: int) -> str:
+    if not settings.gemini_api_key:
+        raise LLMError("GEMINI_API_KEY is not set")
 
+    url = "https://generativelanguage.googleapis.com/v1/interactions"
+
+    model = settings.gemini_model
+    if not model.startswith("models/"):
+        model = f"models/{model}"
+
+    r = httpx.post(
+        url,
+        headers={
+            "x-goog-api-key": settings.gemini_api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "input": user,
+            "system_instruction": system,
+            "store": False,
+            "generation_config": {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+                "thinking_level": "minimal",
+            },
+        },
+        timeout=settings.llm_timeout_seconds,
+    )
+
+    if r.status_code != 200:
+        raise LLMError(
+            f"Gemini returned {r.status_code}: {r.text[:500]}"
+        )
+
+    payload = r.json()
+
+    if payload.get("status") != "completed":
+        raise LLMError(
+            f"Gemini interaction did not complete: "
+            f"{json.dumps(payload)[:500]}"
+        )
+
+    try:
+        for step in payload["steps"]:
+            if step.get("type") == "model_output":
+                for content in step.get("content", []):
+                    if content.get("type") == "text":
+                        return content["text"]
+
+    except (KeyError, TypeError):
+        pass
+
+    raise LLMError(
+        f"Unexpected Gemini interaction response: "
+        f"{json.dumps(payload)[:500]}"
+    )
 
 def complete(
     user: str,
