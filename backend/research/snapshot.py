@@ -10,6 +10,13 @@ recorded for the paper.
 
 Polite by design: honours robots.txt, one request at a time, a delay between
 requests, and a page cap.
+
+Idempotent by default: if data/research/<site>/pages.json already exists, the
+site is not re-crawled — this file is meant to be portable (copy the whole
+data/research/ folder to another machine and it just works), and a silent
+re-crawl would both hit the target site again needlessly and overwrite a
+snapshot you may have already reviewed questions against. Pass --force to
+redo it deliberately.
 """
 
 from __future__ import annotations
@@ -83,7 +90,17 @@ def normalise(url: str) -> str:
     return url[:-1] if url.endswith("/") and urlparse(url).path not in ("", "/") else url
 
 
-def crawl_site(site: str, max_pages: int | None, delay: float) -> None:
+def crawl_site(site: str, max_pages: int | None, delay: float, force: bool = False) -> None:
+    out_dir = site_dir(site)
+    existing_meta = out_dir / "meta.json"
+    if existing_meta.exists() and not force:
+        prior = json.loads(existing_meta.read_text())
+        log.info(
+            "Snapshot already exists for %s: %d pages, crawled %s. Skipping — pass --force to redo it.",
+            site, prior.get("page_count", "?"), prior.get("crawled_at", "unknown date"),
+        )
+        return
+
     cfg = site_config(site)
     limit = max_pages or cfg.get("max_pages", 250)
     exclude = re.compile(cfg["exclude_regex"]) if cfg.get("exclude_regex") else None
@@ -113,7 +130,17 @@ def crawl_site(site: str, max_pages: int | None, delay: float) -> None:
             if res.status_code != 200 or "text/html" not in res.headers.get("content-type", ""):
                 continue
 
-            final = normalise(str(res.url))
+            # Keep the real, un-stripped URL as the base for resolving links on this
+            # page. normalise() strips a trailing slash for de-duplication purposes
+            # (so /page and /page/ count as one page), but urljoin() treats a base
+            # without a trailing slash as a *file*, not a *directory* — resolving a
+            # relative link like "tutorial/index.html" against the stripped
+            # ".../3" would silently produce ".../tutorial/index.html", dropping the
+            # "/3" segment entirely. Only sites whose theme emits relative hrefs
+            # (Sphinx, mdBook) are affected; sites with absolute-path hrefs
+            # (Docusaurus, VitePress) are not.
+            final_raw = str(res.url)
+            final = normalise(final_raw)
             if final != url and final in seen:
                 continue  # a redirect to a page we already have
             seen.add(final)
@@ -130,7 +157,7 @@ def crawl_site(site: str, max_pages: int | None, delay: float) -> None:
                     log.info("%s: %d pages", site, len(pages))
 
             for anchor in BeautifulSoup(res.text, "lxml").find_all("a", href=True):
-                link = normalise(urljoin(final, anchor["href"]))
+                link = normalise(urljoin(final_raw, anchor["href"]))
                 if link not in seen and _follow(link, cfg, exclude):
                     queue.append(link)
             time.sleep(delay)
@@ -150,7 +177,7 @@ def crawl_site(site: str, max_pages: int | None, delay: float) -> None:
         "total_words": sum(len(b.text.split()) for p in pages for b in p.blocks()),
         "config": cfg,
     }
-    (site_dir(site) / "meta.json").write_text(json.dumps(meta, indent=2))
+    existing_meta.write_text(json.dumps(meta, indent=2))
     log.info("Saved %d pages to %s (generator: %s, %d words)", len(pages), path, meta["generator"], meta["total_words"])
     if len(pages) < 20:
         log.warning(
@@ -163,8 +190,9 @@ def main() -> None:
     parser.add_argument("--site", required=True)
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--delay", type=float, default=0.5, help="Seconds between requests")
+    parser.add_argument("--force", action="store_true", help="Re-crawl even if a snapshot already exists")
     args = parser.parse_args()
-    crawl_site(args.site, args.max_pages, args.delay)
+    crawl_site(args.site, args.max_pages, args.delay, args.force)
 
 
 if __name__ == "__main__":

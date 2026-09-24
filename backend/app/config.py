@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
-    llm_timeout_seconds: int = 60
+    llm_timeout_seconds: int = 120 # changed from 60 to 120
 
     # --- Embeddings ------------------------------------------------------
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

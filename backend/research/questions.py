@@ -21,6 +21,7 @@ import json
 import logging
 import random
 import time
+import http
 
 from app import llm
 from research.common import load_pages, site_dir
@@ -106,17 +107,43 @@ def main() -> None:
     for start in range(0, len(passages), PER_CALL):
         batch = passages[start : start + PER_CALL]
         listing = "\n\n".join(f"[{i + 1}] {p['gold_text']}" for i, p in enumerate(batch))
-        try:
-            result = llm.complete_json(
-                PROMPT.format(n=len(batch), site=args.site, passages=listing),
-                system="You write realistic questions from product users.",
-                temperature=0.4,
-                max_tokens=900,
-            )
-            items = result.get("questions", []) if isinstance(result, dict) else result
-        except llm.LLMError as exc:
-            log.warning("Batch at %d failed: %s", start, exc)
-            items = []
+        items = []
+        for attempt in range(3):
+            try:
+                result = llm.complete_json(
+                    PROMPT.format(n=len(batch), site=args.site, passages=listing),
+                    system="You write realistic questions from product users.",
+                    temperature=0.4,
+                    max_tokens=900,
+                )
+
+                items = result.get("questions", []) if isinstance(result, dict) else result
+                break
+
+            except (
+                llm.LLMError,
+                httpx.RemoteProtocolError,
+                httpx.ReadTimeout,
+                httpx.ConnectError,
+            ) as exc:
+                if attempt == 2:
+                    log.error(
+                        "Batch at %d failed after 3 attempts: %s",
+                        start,
+                        exc,
+                    )
+                    raise
+
+                wait = 5 * (attempt + 1)
+                log.warning(
+                    "Batch at %d failed (attempt %d/3): %s. "
+                    "Retrying in %d seconds...",
+                    start,
+                    attempt + 1,
+                    exc,
+                    wait,
+                )
+                time.sleep(wait)
         for item in items if isinstance(items, list) else []:
             try:
                 idx = int(item["id"]) - 1

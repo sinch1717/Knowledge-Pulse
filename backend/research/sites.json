@@ -26,13 +26,32 @@
     "strip_selectors": [".hash-link", ".theme-doc-footer", ".pagination-nav", ".theme-doc-breadcrumbs", ".theme-doc-toc-mobile", ".theme-edit-this-page"],
     "max_pages": 250
   },
-  "plaid": {
-    "name": "Plaid documentation",
-    "entry": "https://plaid.com/docs/",
-    "include_prefix": "https://plaid.com/docs/",
-    "exclude_regex": "/(?:search|llms\\.txt)",
+  "python": {
+    "name": "Python Documentation",
+    "entry": "https://docs.python.org/3/",
+    "include_prefix": "https://docs.python.org/3/",
+    "exclude_regex": "/(?:downloads|search|genindex|py-modindex)/",
     "content_selector": "main",
-    "strip_selectors": [],
+    "strip_selectors": [
+      ".headerlink",
+      ".related",
+      ".sphinxsidebar",
+      "nav"
+    ],
+    "max_pages": 250
+  },
+  "vue": {
+    "name": "Vue.js Guide",
+    "entry": "https://vuejs.org/guide/introduction.html",
+    "include_prefix": "https://vuejs.org/guide/",
+    "exclude_regex": "/(?:api|examples|style-guide)/",
+    "content_selector": "main",
+    "strip_selectors": [
+      ".VPDocAside",
+      ".VPSidebar",
+      ".VPNav",
+      ".VPFooter"
+    ],
     "max_pages": 250
   }
 }
