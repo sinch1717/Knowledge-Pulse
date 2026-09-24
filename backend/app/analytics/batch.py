@@ -29,6 +29,7 @@ from app.models import (
     Report,
     TopicCluster,
 )
+from app.tenant import organization_of
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def previous_period(period: str) -> str:
 
 def run_batch(db: Session, period: str, workspace_id: str = DEFAULT_WORKSPACE_ID) -> Report | None:
     log.info("Analytics batch starting for %s in %s", period, workspace_id)
+    organization_id = organization_of(db, workspace_id)
 
     questions = (
         db.query(Message)
@@ -91,6 +93,7 @@ def run_batch(db: Session, period: str, workspace_id: str = DEFAULT_WORKSPACE_ID
 
         row = TopicCluster(
             id=new_id("ins"),
+            organization_id=organization_id,
             workspace_id=workspace_id,
             period=period,
             name=cluster.name,
@@ -113,7 +116,13 @@ def run_batch(db: Session, period: str, workspace_id: str = DEFAULT_WORKSPACE_ID
         db.add(row)
         db.flush()
         for index in cluster.indices:
-            db.add(ClusterMember(cluster_id=row.id, message_id=questions[index].id))
+            db.add(
+                ClusterMember(
+                    organization_id=organization_id,
+                    cluster_id=row.id,
+                    message_id=questions[index].id,
+                )
+            )
         rows.append(row)
 
     rows.sort(key=lambda r: -r.priority)
@@ -121,7 +130,7 @@ def run_batch(db: Session, period: str, workspace_id: str = DEFAULT_WORKSPACE_ID
         row.rank = position
     db.commit()
 
-    report = _build_report(db, period, rows, questions, workspace_id)
+    report = _build_report(db, period, rows, questions, workspace_id, organization_id)
     log.info("Batch complete: %d topics, %d recommendations", len(rows), len(report.recommendations))
     return report
 
@@ -148,6 +157,7 @@ def _build_report(
     rows: list[TopicCluster],
     questions: list[Message],
     workspace_id: str,
+    organization_id: str,
 ) -> Report:
     low = sum(1 for q in questions if (q.confidence or 0) < settings.low_confidence_threshold)
     unanswered_rate = round(low / len(questions), 4)
@@ -161,6 +171,7 @@ def _build_report(
 
     report = Report(
         id=new_id("rep"),
+        organization_id=organization_id,
         workspace_id=workspace_id,
         period=period,
         generated_at=datetime.now(timezone.utc),
@@ -181,7 +192,7 @@ def _build_report(
     for row in top:
         samples = _sample_questions(db, row.id, limit=8)
         category = recommend.choose_category(row, median_volume)
-        db.add(recommend.write_recommendation(row, category, samples, report.id))
+        db.add(recommend.write_recommendation(row, category, samples, report.id, organization_id))
 
     db.commit()
     db.refresh(report)

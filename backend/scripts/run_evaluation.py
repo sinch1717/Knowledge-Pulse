@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import evaluation  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.migrate import upgrade  # noqa: E402
+from app.tenant import resolve_workspace  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s | %(message)s",
                     datefmt="%H:%M:%S")
@@ -26,7 +27,10 @@ log = logging.getLogger("eval")
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace", default="ws_default")
+    parser.add_argument("--workspace", default=None,
+                        help="Workspace id (see GET /api/workspaces). Default: the organisation's default workspace")
+    parser.add_argument("--organization-id", default=None,
+                        help="Organisation id. Default: org_default, or the workspace's own")
     parser.add_argument("--set", default=None, help="Question file. Default: data/eval_set_<workspace>.json, "
                         "falling back to data/eval_set.json")
     args = parser.parse_args()
@@ -34,6 +38,7 @@ def main() -> None:
     upgrade()
     db = SessionLocal()
     try:
+        args.workspace = resolve_workspace(db, args.workspace, args.organization_id).id
         path = args.set or f"data/eval_set_{args.workspace}.json"
         if not args.set and not Path(path).exists():
             path = "data/eval_set.json"

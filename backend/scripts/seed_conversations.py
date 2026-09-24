@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import llm  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.migrate import upgrade  # noqa: E402
+from app.tenant import resolve_workspace  # noqa: E402
 from app.models import Chunk, Source  # noqa: E402
 from app.rag import engine  # noqa: E402
 
@@ -183,12 +184,16 @@ def main() -> None:
     parser.add_argument("--questions", type=int, default=800)
     parser.add_argument("--periods", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true", help="Write the question set, do not replay it")
-    parser.add_argument("--workspace", default="ws_default", help="Workspace id to seed (see GET /api/workspaces)")
+    parser.add_argument("--workspace", default=None,
+                        help="Workspace id (see GET /api/workspaces). Default: the organisation's default workspace")
+    parser.add_argument("--organization-id", default=None,
+                        help="Organisation id. Default: org_default, or the workspace's own")
     args = parser.parse_args()
 
     upgrade()
     db = SessionLocal()
     try:
+        args.workspace = resolve_workspace(db, args.workspace, args.organization_id).id
         label, headings = load_corpus_headings(db, args.workspace)
         log.info("Generating traffic for: %s", label)
 

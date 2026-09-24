@@ -143,6 +143,7 @@ class WorkspaceOut(Base):
     chunkOverlapWords: int
     crawlMaxPages: int
     usesDefaults: bool
+    isDefault: bool
     sourceCount: int
     chunkCount: int
     questionCount: int

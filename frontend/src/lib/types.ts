@@ -134,6 +134,8 @@ export interface Workspace {
   chunkOverlapWords: number;
   crawlMaxPages: number;
   usesDefaults: boolean;
+  /** The organisation's default workspace. It cannot be deleted. */
+  isDefault: boolean;
   sourceCount: number;
   chunkCount: number;
   questionCount: number;

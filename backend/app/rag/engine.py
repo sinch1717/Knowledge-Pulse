@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app import embeddings, llm, vector_store
 from app.config import settings
 from app.models import DEFAULT_WORKSPACE_ID, Conversation, Message
+from app.tenant import organization_of
 
 log = logging.getLogger(__name__)
 
@@ -80,9 +81,14 @@ def answer(
     created_at: datetime | None = None,
     workspace_id: str = DEFAULT_WORKSPACE_ID,
 ) -> Message:
-    """Answer one question and persist both turns. Returns the assistant message."""
+    """Answer one question and persist both turns. Returns the assistant message.
+
+    The organisation is read from the workspace, so callers only pass the
+    workspace and every row written here is stamped with the right tenant.
+    """
     created_at = created_at or datetime.now(timezone.utc)
     period = current_period(created_at)
+    organization_id = organization_of(db, workspace_id)
 
     conversation = (
         db.query(Conversation)
@@ -92,6 +98,7 @@ def answer(
     if conversation is None:
         conversation = Conversation(
             id=new_id("conv"),
+            organization_id=organization_id,
             workspace_id=workspace_id,
             session_id=session_id,
             started_at=created_at,
@@ -102,7 +109,12 @@ def answer(
 
     # --- retrieve -------------------------------------------------------
     query_vector = embeddings.embed_one(question)
-    hits = vector_store.search(query_vector, settings.retrieval_top_k, workspace_id=workspace_id)
+    hits = vector_store.search(
+        query_vector,
+        settings.retrieval_top_k,
+        workspace_id=workspace_id,
+        organization_id=organization_id,
+    )
     similarities = [h["similarity"] for h in hits]
     confidence = compute_confidence(similarities)
 
@@ -110,6 +122,7 @@ def answer(
     db.add(
         Message(
             id=new_id("msg"),
+            organization_id=organization_id,
             workspace_id=workspace_id,
             conversation_id=conversation.id,
             role="customer",
@@ -141,6 +154,7 @@ def answer(
 
     assistant = Message(
         id=new_id("msg"),
+        organization_id=organization_id,
         workspace_id=workspace_id,
         conversation_id=conversation.id,
         role="assistant",
@@ -167,9 +181,16 @@ def answer(
     return assistant
 
 
-def retrieve_only(question: str, workspace_id: str = DEFAULT_WORKSPACE_ID) -> tuple[list[dict], float]:
+def retrieve_only(
+    question: str,
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+    organization_id: str | None = None,
+) -> tuple[list[dict], float]:
     """Used by the evaluation harness, which needs context without logging a turn."""
     hits = vector_store.search(
-        embeddings.embed_one(question), settings.retrieval_top_k, workspace_id=workspace_id
+        embeddings.embed_one(question),
+        settings.retrieval_top_k,
+        workspace_id=workspace_id,
+        organization_id=organization_id,
     )
     return hits, compute_confidence([h["similarity"] for h in hits])

@@ -4,6 +4,9 @@ Everything the rest of the system does with vectors goes through these four
 functions. If Chroma ever needs to become pgvector, this is the only file that
 changes.
 
+Every chunk's metadata carries workspace_id and organization_id, and searches
+filter on both inside Chroma, so another tenant's chunks are never candidates.
+
 Note that similarity is returned as cosine similarity in [0, 1]. Chroma hands
 back a distance, and getting that conversion wrong would quietly corrupt every
 confidence score in the system, so it happens once, here.
@@ -61,15 +64,38 @@ def delete_source(source_id: str) -> None:
     _get_collection().delete(where={"source_id": source_id})
 
 
-def count(workspace_id: str | None = None) -> int:
+def _where(workspace_id: str | None, organization_id: str | None) -> dict | None:
+    """Chroma filter for a tenant. $and needs two or more clauses, hence the cases."""
+    clauses = []
+    if workspace_id:
+        clauses.append({"workspace_id": {"$eq": workspace_id}})
+    if organization_id:
+        clauses.append({"organization_id": {"$eq": organization_id}})
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else {"$and": clauses}
+
+
+def count(workspace_id: str | None = None, organization_id: str | None = None) -> int:
     collection = _get_collection()
-    if workspace_id is None:
+    where = _where(workspace_id, organization_id)
+    if where is None:
         return collection.count()
-    return len(collection.get(where={"workspace_id": workspace_id}, include=[])["ids"])
+    return len(collection.get(where=where, include=[])["ids"])
 
 
-def backfill_workspace(default_workspace_id: str, batch: int = 500) -> int:
-    """Tag chunks indexed before workspaces existed. Returns how many were updated.
+def backfill_tenancy(
+    default_workspace_for_org,
+    organization_for_workspace: dict[str, str],
+    default_organization_id: str,
+    batch: int = 500,
+) -> int:
+    """Tag chunks indexed before workspaces or organisations existed.
+
+    A chunk missing workspace_id goes to its organisation's default workspace
+    (the default organisation's, if it has no organisation either). A chunk
+    missing organization_id takes its workspace's organisation. Returns how many
+    were updated.
 
     Chroma cannot filter on a missing key, so this reads every metadata once. It
     is cheap at this scale and a no-op after the first run.
@@ -82,32 +108,43 @@ def backfill_workspace(default_workspace_id: str, batch: int = 500) -> int:
         ids, metas = [], []
         for cid, meta in zip(page["ids"], page["metadatas"]):
             meta = dict(meta or {})
+            if "workspace_id" in meta and "organization_id" in meta:
+                continue
             if "workspace_id" not in meta:
-                meta["workspace_id"] = default_workspace_id
-                ids.append(cid)
-                metas.append(meta)
+                meta["workspace_id"] = default_workspace_for_org(
+                    meta.get("organization_id") or default_organization_id
+                )
+            if "organization_id" not in meta:
+                meta["organization_id"] = organization_for_workspace.get(
+                    meta["workspace_id"], default_organization_id
+                )
+            ids.append(cid)
+            metas.append(meta)
         if ids:
             collection.update(ids=ids, metadatas=metas)
             updated += len(ids)
     if updated:
-        log.info("Tagged %d existing chunks with workspace %s", updated, default_workspace_id)
+        log.info("Tagged %d existing chunks with their workspace and organisation", updated)
     return updated
 
 
-def search(vector, top_k: int, workspace_id: str | None = None) -> list[dict]:
+def search(
+    vector, top_k: int, workspace_id: str | None = None, organization_id: str | None = None
+) -> list[dict]:
     """Return the top-k chunks with cosine similarity in [0, 1], best first.
 
-    With a workspace id, only that workspace's chunks are searched, so one
-    profile can never answer from another's sources.
+    Filtered to one workspace of one organisation, so a profile can never answer
+    from another's sources, and a tenant never from another tenant's.
     """
     collection = _get_collection()
-    available = count(workspace_id)
+    where = _where(workspace_id, organization_id)
+    available = count(workspace_id, organization_id)
     if available == 0:
         return []
     res = collection.query(
         query_embeddings=[vector.tolist()],
         n_results=min(top_k, available),
-        where={"workspace_id": workspace_id} if workspace_id else None,
+        where=where,
         include=["documents", "metadatas", "distances"],
     )
     hits = []

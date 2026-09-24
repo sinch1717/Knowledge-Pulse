@@ -32,10 +32,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       const list = await api.getWorkspaces();
       setWorkspaces(list);
-      // The saved workspace may have been deleted elsewhere; fall back to the first.
+      // Nothing saved yet, or the saved workspace was deleted elsewhere: use the
+      // organisation's default.
       if (list.length && !list.some((w) => w.id === getWorkspaceId())) {
-        setWorkspaceId(list[0].id);
-        setCurrentId(list[0].id);
+        const fallback = (list.find((w) => w.isDefault) ?? list[0]).id;
+        setWorkspaceId(fallback);
+        setCurrentId(fallback);
       }
     } catch (e) {
       toast(`Could not load workspaces. ${(e as Error).message}`, "error");
@@ -80,7 +82,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }}
         onDeleted={async (name) => {
           setDialog(null);
-          select("ws_default");
+          select(workspaces.find((w) => w.isDefault)?.id ?? "");
           await refresh();
           toast(`Deleted ${name} and everything in it.`, "success");
         }}
@@ -272,7 +274,7 @@ function WorkspaceDialog({
           {problem && name && <p className="text-small text-oxblood">{problem}</p>}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            {mode === "settings" && workspace && workspace.id !== "ws_default" ? (
+            {mode === "settings" && workspace && !workspace.isDefault ? (
               <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy}>
                 Delete workspace
               </Button>

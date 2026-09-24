@@ -1,4 +1,38 @@
-# Changes in this round
+# Changes in this round: multi-tenancy
+
+Merges the organisation-level tenancy from the multitenancy branch into
+workspaces. An organisation (`X-Organization-Id`) owns workspaces
+(`X-Workspace-Id`). Full reference: `docs/TENANCY.md`.
+
+## New
+- `app/tenant.py`: validates `X-Organization-Id` (required on every business
+  route, 400 if missing or malformed), and gives every organisation its own
+  default workspace, created on first use.
+- `organization_id` on every tenant-owned table, with the branch's composite
+  indexes. Chroma chunks carry it too, and searches filter on it.
+- `isDefault` on workspaces, so the frontend no longer hard-codes `ws_default`.
+- Scripts take `--organization-id` alongside `--workspace`.
+- `tests/test_multitenancy.py`: isolation tests for both levels, plus the migration.
+- Smoke test step 6 checks the tenant boundary over HTTP.
+
+## Changed
+- Requests without `X-Workspace-Id` now use the caller's organisation's default
+  workspace, not the global `ws_default`. Another organisation's workspace id is a 404.
+- The start-up migration adds `organization_id` (existing rows go to
+  `org_default`) and creates missing indexes. The branch's
+  `scripts/migrate_multitenancy.py` is not needed.
+- `workspace_id` no longer defaults to `ws_default` in the models: a row written
+  without it fails rather than landing in the default workspace.
+- Smoke test fixed: it had been failing at step 2 since workspaces were added,
+  because the fixture chunks had no workspace id.
+
+## Frontend
+- Sends `X-Organization-Id` from `VITE_ORGANIZATION_ID` (default `org_default`).
+- The saved workspace is remembered per organisation.
+
+---
+
+# Changes in the previous round
 
 ## New
 - **Workspaces.** Fully separate profiles, each with its own sources, chat

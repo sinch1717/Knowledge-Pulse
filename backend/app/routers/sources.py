@@ -39,7 +39,7 @@ def _out(s: Source) -> SourceOut:
 
 def _owned(db: Session, source_id: str, ws: Workspace) -> Source:
     source = db.get(Source, source_id)
-    if source is None or source.workspace_id != ws.id:
+    if source is None or source.workspace_id != ws.id or source.organization_id != ws.organization_id:
         raise HTTPException(404, "No source with that id in this workspace")
     return source
 
@@ -79,6 +79,7 @@ def create_source(
     )
     source = Source(
         id=f"src_{uuid.uuid4().hex[:10]}",
+        organization_id=ws.organization_id,
         workspace_id=ws.id,
         kind=payload.kind,
         label=label,
@@ -112,6 +113,7 @@ async def upload_source(
 
     source = Source(
         id=source_id,
+        organization_id=ws.organization_id,
         workspace_id=ws.id,
         kind=EXTENSION_KIND[extension],
         label=(label or "").strip() or file.filename or destination,

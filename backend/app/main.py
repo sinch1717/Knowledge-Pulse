@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.migrate import upgrade
-from app.models import DEFAULT_WORKSPACE_ID
 from app.routers import chat, insights, research, sources, workspaces
 
 logging.basicConfig(
@@ -19,14 +18,27 @@ logging.basicConfig(
 log = logging.getLogger("knowledgepulse")
 
 
+def _backfill_vectors() -> None:
+    """Tag chunks indexed before workspaces or organisations with both."""
+    from app import vector_store
+    from app.db import SessionLocal
+    from app.models import Workspace
+    from app.tenant import default_workspace_id
+
+    db = SessionLocal()
+    try:
+        owners = {w.id: w.organization_id for w in db.query(Workspace).all()}
+    finally:
+        db.close()
+    vector_store.backfill_tenancy(default_workspace_id, owners, settings.default_organization_id)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     upgrade()
     log.info("Database ready at %s", settings.database_url)
     try:
-        from app import vector_store
-
-        vector_store.backfill_workspace(DEFAULT_WORKSPACE_ID)
+        _backfill_vectors()
     except Exception as exc:  # noqa: BLE001 - the API should still start
         log.warning("Could not tag existing chunks with a workspace: %s", exc)
     log.info("Language model provider: %s", settings.llm_provider)
@@ -59,6 +71,7 @@ app.include_router(insights.router)
 app.include_router(research.router)
 
 
+# Public, no X-Organization-Id: infrastructure checks only, no tenant data.
 @app.get("/api/health")
 def health():
     from app import vector_store

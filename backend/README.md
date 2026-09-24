@@ -56,8 +56,14 @@ Then, in order:
 ```bash
 curl -X POST localhost:8000/api/sources \
   -H 'Content-Type: application/json' \
+  -H 'X-Organization-Id: org_default' \
   -d '{"kind":"website","location":"https://docs.example.com"}'
 ```
+
+Every route except `/api/health` and `/api/research/latest` needs the
+`X-Organization-Id` header, and rejects a request without it with 400. Add
+`X-Workspace-Id` to target a workspace other than the organisation's default.
+The scripts take `--organization-id` and `--workspace`. See `docs/TENANCY.md`.
 
 Crawling runs in the background. Watch `GET /api/sources` until status reads
 `ready`. A hundred pages takes two or three minutes, most of it the polite delay

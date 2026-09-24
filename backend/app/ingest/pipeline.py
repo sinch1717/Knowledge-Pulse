@@ -118,6 +118,7 @@ def ingest_source(source_id: str) -> None:
                 {
                     "source_id": source.id,
                     "workspace_id": source.workspace_id,
+                    "organization_id": source.organization_id,
                     "source_label": source.label,
                     "heading_path": raw.heading_path,
                     "url": raw.url or source.location,
@@ -126,6 +127,7 @@ def ingest_source(source_id: str) -> None:
             db.add(
                 Chunk(
                     id=chunk_id,
+                    organization_id=source.organization_id,
                     source_id=source.id,
                     heading_path=raw.heading_path,
                     url=raw.url,

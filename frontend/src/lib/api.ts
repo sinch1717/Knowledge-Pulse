@@ -38,17 +38,23 @@ export const usingMockData = BASE === "";
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
-// ---- current workspace ---------------------------------------------------------
-// Every request carries X-Workspace-Id. The backend falls back to the default
-// workspace when the header is missing, so older clients keep working.
+// ---- organisation and workspace ------------------------------------------------
+// Every request carries X-Organization-Id, which the backend requires. Until the
+// Next.js app supplies it from the signed-in user, it comes from the environment.
+// X-Workspace-Id is sent once a workspace is chosen; without it the backend uses
+// the organisation's default workspace.
 
-const WORKSPACE_KEY = "kp.workspace";
+export const organizationId = import.meta.env.VITE_ORGANIZATION_ID || "org_default";
+
+// Remembered per organisation, so switching organisations never sends a
+// workspace id that belongs to another one.
+const WORKSPACE_KEY = `kp.workspace.${organizationId}`;
 
 function readStoredWorkspace(): string {
   try {
-    return localStorage.getItem(WORKSPACE_KEY) || "ws_default";
+    return localStorage.getItem(WORKSPACE_KEY) || "";
   } catch {
-    return "ws_default";
+    return "";
   }
 }
 
@@ -65,7 +71,10 @@ export function setWorkspaceId(id: string) {
   }
 }
 
-const workspaceHeader = () => ({ "X-Workspace-Id": currentWorkspace });
+const workspaceHeader = (): Record<string, string> =>
+  currentWorkspace
+    ? { "X-Organization-Id": organizationId, "X-Workspace-Id": currentWorkspace }
+    : { "X-Organization-Id": organizationId };
 
 /** Turn a failed response into a readable message. FastAPI puts it in `detail`. */
 async function failure(res: Response): Promise<Error> {
@@ -126,6 +135,7 @@ export const api = {
         chunkOverlapWords: input.chunkOverlapWords ?? 40,
         crawlMaxPages: input.crawlMaxPages ?? 120,
         usesDefaults: input.chunkTargetWords == null && input.chunkOverlapWords == null,
+        isDefault: false,
         sourceCount: 0,
         chunkCount: 0,
         questionCount: 0,

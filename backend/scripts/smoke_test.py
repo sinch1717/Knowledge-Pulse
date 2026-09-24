@@ -162,18 +162,20 @@ def main() -> None:
 
     from app import embeddings, vector_store
     from app.analytics import batch
-    from app.db import SessionLocal, create_tables
+    from app.db import SessionLocal
     from app.ingest import chunker
-    from app.models import Chunk, Message, Source
+    from app.migrate import upgrade
+    from app.models import DEFAULT_WORKSPACE_ID, Chunk, Message, Source
     from app.rag import engine
 
-    create_tables()
+    org = config_module.settings.default_organization_id
+    upgrade()  # creates the tables and the default organisation's workspace
     db = SessionLocal()
 
     # ---- 1. ingest ------------------------------------------------------
-    log.info("1/5  Indexing a fixture corpus")
-    source = Source(id="src_smoke", kind="text", label="Fixture docs",
-                    location="memory", status="indexing")
+    log.info("1/6  Indexing a fixture corpus (organisation %s)", org)
+    source = Source(id="src_smoke", organization_id=org, workspace_id=DEFAULT_WORKSPACE_ID,
+                    kind="text", label="Fixture docs", location="memory", status="indexing")
     db.add(source)
     db.commit()
 
@@ -188,11 +190,12 @@ def main() -> None:
     texts = [c.text for c in raw]
     vectors = embeddings.embed(texts)
     ids = [f"chk_{n:04d}" for n in range(len(raw))]
-    metas = [{"source_id": source.id, "source_label": source.label,
+    metas = [{"source_id": source.id, "workspace_id": source.workspace_id,
+              "organization_id": org, "source_label": source.label,
               "heading_path": c.heading_path, "url": ""} for c in raw]
     vector_store.upsert(ids, vectors, metas, texts)
     for chunk_id, c in zip(ids, raw):
-        db.add(Chunk(id=chunk_id, source_id=source.id, heading_path=c.heading_path,
+        db.add(Chunk(id=chunk_id, organization_id=org, source_id=source.id, heading_path=c.heading_path,
                      text=c.text, word_count=c.word_count))
     source.status = "ready"
     source.chunk_count = len(ids)
@@ -200,7 +203,7 @@ def main() -> None:
     log.info("     %d chunks indexed, vector store holds %d", len(ids), vector_store.count())
 
     # ---- 2. retrieval and confidence ------------------------------------
-    log.info("2/5  Checking retrieval confidence separates covered from uncovered")
+    log.info("2/6  Checking retrieval confidence separates covered from uncovered")
     hits_known, conf_known = engine.retrieve_only("can i edit an invoice after sending it")
     hits_unknown, conf_unknown = engine.retrieve_only("upi autopay mandate revoked by bank")
     log.info("     covered question   confidence %.3f (%d hits)", conf_known, len(hits_known))
@@ -208,7 +211,7 @@ def main() -> None:
     assert conf_known > conf_unknown, "confidence failed to separate covered from uncovered"
 
     # ---- 3. replay three periods ----------------------------------------
-    log.info("3/5  Replaying three periods of traffic")
+    log.info("3/6  Replaying three periods of traffic")
     random.seed(11)
     now = datetime.now(timezone.utc).replace(day=10)
     periods = [(now - timedelta(days=30 * back)) for back in (2, 1, 0)]
@@ -240,7 +243,7 @@ def main() -> None:
     assert logged == total, f"expected {total} logged questions, found {logged}"
 
     # ---- 4. analytics ----------------------------------------------------
-    log.info("4/5  Running the analytics batch over every period")
+    log.info("4/6  Running the analytics batch over every period")
     reports = batch.run_for_all_periods(db)
     assert reports, "no reports produced"
 
@@ -264,7 +267,7 @@ def main() -> None:
         "no topic matched across periods — centroid matching is broken"
 
     # ---- 5. report -------------------------------------------------------
-    log.info("5/5  Checking the report")
+    log.info("5/6  Checking the report")
     assert final.recommendations, "report has no recommendations"
     categories = {r.category for r in final.recommendations}
     log.info("     %d recommendations across categories: %s",
@@ -272,10 +275,32 @@ def main() -> None:
     for rec in final.recommendations:
         assert rec.supporting_queries, f"{rec.id} has no evidence attached"
     log.info("     every recommendation carries its supporting questions")
+    assert final.organization_id == org and all(r.organization_id == org for r in final.recommendations), \
+        "report rows were not stamped with the organisation"
+
+    # ---- 6. tenancy over HTTP -------------------------------------------
+    log.info("6/6  Checking the X-Organization-Id boundary over HTTP")
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.get("/api/health").status_code == 200, "health must stay public"
+    assert client.get("/api/sources").status_code == 400, "a request without an organisation must fail"
+    mine = client.get("/api/sources", headers={"X-Organization-Id": org}).json()
+    assert [s["id"] for s in mine] == ["src_smoke"], "the default organisation lost its source"
+    other = {"X-Organization-Id": "org_smoke_other"}
+    assert client.get("/api/sources", headers=other).json() == [], "another organisation saw our source"
+    assert client.get("/api/insights", headers=other).json() == [], "another organisation saw our insights"
+    hop = {**other, "X-Workspace-Id": DEFAULT_WORKSPACE_ID}
+    assert client.get("/api/sources", headers=hop).status_code == 404, "workspace hopping across organisations"
+    reply = client.post("/api/chat", headers=other, json={"question": "can i edit an invoice", "session_id": "s1"})
+    assert reply.status_code == 200 and reply.json()["citations"] == [], "chat retrieved another tenant's chunks"
+    log.info("     header required, data and chunks invisible across organisations")
 
     db.close()
     log.info("")
-    log.info("All checks passed. The pipeline is wired correctly.")
+    log.info("All checks passed. The pipeline and the tenant boundary are wired correctly.")
     log.info("Real embeddings and a real model will change the quality of the output,")
     log.info("not its shape. Workspace: %s", workspace)
 

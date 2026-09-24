@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     chroma_path: str = "./data/chroma"
     upload_path: str = "./data/uploads"
 
+    # --- Multi-tenancy -----------------------------------------------------
+    # The organisation that owns everything created before tenancy existed, and
+    # the one scripts use when no --organization-id is given. HTTP requests never
+    # fall back to it: they must send X-Organization-Id. See docs/TENANCY.md.
+    default_organization_id: str = "org_default"
+
     # --- Language model --------------------------------------------------
     # "groq" for development, "gemini" for the demo. One interface, two adapters.
     llm_provider: str = "groq"
@@ -25,7 +31,7 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
-    llm_timeout_seconds: int = 120 # changed from 60 to 120
+    llm_timeout_seconds: int = 60
 
     # --- Embeddings ------------------------------------------------------
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"

@@ -164,7 +164,7 @@ def list_insights(
 @router.get("/insights/{insight_id}", response_model=InsightDetailOut)
 def get_insight(insight_id: str, db: Session = Depends(get_db), ws: Workspace = Depends(current_workspace)):
     cluster = db.get(TopicCluster, insight_id)
-    if cluster is None or cluster.workspace_id != ws.id:
+    if cluster is None or cluster.workspace_id != ws.id or cluster.organization_id != ws.organization_id:
         raise HTTPException(404, "No insight with that id")
 
     # Walk the chain of previous_cluster_id links backwards to build the history.

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import llm  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.migrate import upgrade  # noqa: E402
+from app.tenant import resolve_workspace  # noqa: E402
 from app.models import Chunk, Source  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s | %(message)s",
@@ -48,12 +49,16 @@ Do not return a JSON array. Do not include any other fields."""
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=50)
-    parser.add_argument("--workspace", default="ws_default")
+    parser.add_argument("--workspace", default=None,
+                        help="Workspace id (see GET /api/workspaces). Default: the organisation's default workspace")
+    parser.add_argument("--organization-id", default=None,
+                        help="Organisation id. Default: org_default, or the workspace's own")
     args = parser.parse_args()
 
     upgrade()
     db = SessionLocal()
     try:
+        args.workspace = resolve_workspace(db, args.workspace, args.organization_id).id
         chunks = (
             db.query(Chunk)
             .join(Source, Source.id == Chunk.source_id)

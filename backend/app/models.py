@@ -4,12 +4,19 @@ and bookkeeping tables.
 The chain that matters runs: message -> retrieved chunk ids -> chunk -> source.
 Every finding downstream can be walked back along it, which is what makes
 NFR5 (explainability) true rather than aspirational.
+
+Tenancy is two levels. An organisation (the tenant, identified by the
+X-Organization-Id header) owns workspaces; a workspace owns sources,
+conversations, topics, reports and evaluation runs. Every tenant-owned row
+carries organization_id, and the rows a workspace owns carry workspace_id too.
+Neither column has a default: a row created without them fails to insert
+rather than landing silently in someone else's data.
 """
 
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text, DateTime
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -20,19 +27,28 @@ def now() -> datetime:
 
 
 # Every pre-workspace row is migrated into this one, so existing data keeps working.
+# It is the default workspace of the default organisation; every other
+# organisation gets its own (see app.tenant.default_workspace_id).
 DEFAULT_WORKSPACE_ID = "ws_default"
+
+
+def _organization_column() -> Mapped[str]:
+    return mapped_column(String(64), nullable=False, index=True)
 
 
 class Workspace(Base):
     """A fully separate profile: its own sources, conversations, topics and reports.
 
-    One organisation, or one documentation site in the research experiments. The
-    chunk settings are per workspace so two sites can be indexed differently.
+    Belongs to one organisation, which may have several: one per product, or one
+    per documentation site in the research experiments. The chunk settings are
+    per workspace so two sites can be indexed differently.
     """
 
     __tablename__ = "workspaces"
+    __table_args__ = (Index("ix_workspaces_org_created_at", "organization_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str] = mapped_column(Text, default="")
     # Null means "use the global default from config".
@@ -43,13 +59,15 @@ class Workspace(Base):
 
 
 def _workspace_column() -> Mapped[str]:
-    return mapped_column(String(40), index=True, default=DEFAULT_WORKSPACE_ID)
+    return mapped_column(String(40), nullable=False, index=True)
 
 
 class Source(Base):
     __tablename__ = "sources"
+    __table_args__ = (Index("ix_sources_org_created_at", "organization_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     kind: Mapped[str] = mapped_column(String(16))  # website | pdf | docx | text
     label: Mapped[str] = mapped_column(String(200))
@@ -68,8 +86,10 @@ class Source(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+    __table_args__ = (Index("ix_chunks_org_source_id", "organization_id", "source_id"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     source_id: Mapped[str] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"), index=True)
     heading_path: Mapped[str] = mapped_column(Text, default="")
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -82,8 +102,10 @@ class Chunk(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (Index("ix_conversations_org_session_id", "organization_id", "session_id"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     session_id: Mapped[str] = mapped_column(String(64), index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -97,8 +119,14 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_messages_org_period", "organization_id", "period"),
+        Index("ix_messages_org_created_at", "organization_id", "created_at"),
+        Index("ix_messages_org_conversation_id", "organization_id", "conversation_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True
@@ -119,8 +147,10 @@ class Message(Base):
 
 class TopicCluster(Base):
     __tablename__ = "topic_clusters"
+    __table_args__ = (Index("ix_topic_clusters_org_period", "organization_id", "period"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     period: Mapped[str] = mapped_column(String(16), index=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
@@ -143,8 +173,10 @@ class TopicCluster(Base):
 
 class ClusterMember(Base):
     __tablename__ = "cluster_members"
+    __table_args__ = (Index("ix_cluster_members_org_cluster_id", "organization_id", "cluster_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    organization_id: Mapped[str] = _organization_column()
     cluster_id: Mapped[str] = mapped_column(ForeignKey("topic_clusters.id", ondelete="CASCADE"), index=True)
     message_id: Mapped[str] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"))
 
@@ -153,8 +185,10 @@ class ClusterMember(Base):
 
 class Report(Base):
     __tablename__ = "reports"
+    __table_args__ = (Index("ix_reports_org_period", "organization_id", "period"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     period: Mapped[str] = mapped_column(String(16), index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -170,8 +204,10 @@ class Report(Base):
 
 class Recommendation(Base):
     __tablename__ = "recommendations"
+    __table_args__ = (Index("ix_recommendations_org_report_id", "organization_id", "report_id"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
     cluster_id: Mapped[str] = mapped_column(String(40))
     cluster_name: Mapped[str] = mapped_column(Text)
@@ -189,8 +225,10 @@ class Recommendation(Base):
 
 class EvaluationRun(Base):
     __tablename__ = "evaluation_runs"
+    __table_args__ = (Index("ix_evaluation_runs_org_ran_at", "organization_id", "ran_at"),)
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    organization_id: Mapped[str] = _organization_column()
     workspace_id: Mapped[str] = _workspace_column()
     ran_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     question_count: Mapped[int] = mapped_column(Integer, default=0)
