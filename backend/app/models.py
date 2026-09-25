@@ -137,6 +137,9 @@ class Message(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     retrieved_chunk_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     retrieved_scores: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    # Assistant turns: the citations exactly as shown, so a conversation reloads
+    # intact even after its sources are reindexed and the chunk ids change.
+    citations: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
     # Reporting period this turn belongs to, e.g. "2026-08". Set on write so the
     # analytics batch never has to reason about calendars.
@@ -236,3 +239,36 @@ class EvaluationRun(Base):
     answer_relevance: Mapped[float] = mapped_column(Float, default=0.0)
     context_relevance: Mapped[float] = mapped_column(Float, default=0.0)
     failures: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
+# ---- sign-in -------------------------------------------------------------------
+
+def utcnow_naive() -> datetime:
+    """UTC without tzinfo: stored and compared the same way on SQLite and Postgres."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class User(Base):
+    """Someone who can sign in. Belongs to exactly one organisation for now."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    organization_id: Mapped[str] = _organization_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
+class AuthSession(Base):
+    """One signed-in browser. The token itself is never stored, only its hash."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256 of the token
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    user: Mapped[User] = relationship()

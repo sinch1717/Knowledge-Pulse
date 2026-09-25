@@ -1,0 +1,6 @@
+# Test tooling only. Not needed to run the app.
+-r requirements.txt
+pytest==8.3.3
+
+# Optional, only for the browser test (./run-tests.sh e2e):
+#   pip install playwright==1.56.0 && python -m playwright install chromium

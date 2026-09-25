@@ -2,8 +2,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL?: string;
-  readonly VITE_ACCOUNT_NAME?: string;
-  readonly VITE_ORGANIZATION_ID?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

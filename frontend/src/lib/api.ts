@@ -17,6 +17,8 @@ import {
   mockWorkspaces,
 } from "@/mock/data";
 import type {
+  AuthSession,
+  AuthUser,
   BackendState,
   Citation,
   EvaluationRun,
@@ -38,21 +40,63 @@ export const usingMockData = BASE === "";
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
-// ---- organisation and workspace ------------------------------------------------
-// Every request carries X-Organization-Id, which the backend requires. Until the
-// Next.js app supplies it from the signed-in user, it comes from the environment.
+// ---- session ------------------------------------------------------------------
+// Signing in returns a bearer token, kept in localStorage so it survives reloads
+// until it expires or the user signs out. The organisation comes from the
+// session on the server; the browser never names it.
+
+const SESSION_KEY = "kp.session";
+
+function readStoredSession(): AuthSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AuthSession;
+    return new Date(parsed.expiresAt).getTime() > Date.now() ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+let session: AuthSession | null = readStoredSession();
+
+export const getSession = () => session;
+
+function storeSession(next: AuthSession | null) {
+  session = next;
+  try {
+    if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Storage disabled: the session lasts until the tab closes.
+  }
+  currentWorkspace = readStoredWorkspace();
+}
+
+// Told when the server ends the session (expired, or signed out elsewhere).
+type SessionListener = (reason: string) => void;
+const sessionListeners = new Set<SessionListener>();
+export function onSessionEnded(listener: SessionListener) {
+  sessionListeners.add(listener);
+  return () => void sessionListeners.delete(listener);
+}
+
+function endSession(reason: string) {
+  if (!session) return;
+  storeSession(null);
+  sessionListeners.forEach((l) => l(reason));
+}
+
+// ---- workspace ------------------------------------------------------------------
 // X-Workspace-Id is sent once a workspace is chosen; without it the backend uses
-// the organisation's default workspace.
+// the organisation's default workspace. Remembered per organisation, so one
+// account never sends another organisation's workspace id.
 
-export const organizationId = import.meta.env.VITE_ORGANIZATION_ID || "org_default";
-
-// Remembered per organisation, so switching organisations never sends a
-// workspace id that belongs to another one.
-const WORKSPACE_KEY = `kp.workspace.${organizationId}`;
+const workspaceKey = () => `kp.workspace.${session?.user.organizationId ?? "none"}`;
 
 function readStoredWorkspace(): string {
   try {
-    return localStorage.getItem(WORKSPACE_KEY) || "";
+    return localStorage.getItem(workspaceKey()) || "";
   } catch {
     return "";
   }
@@ -65,16 +109,18 @@ export const getWorkspaceId = () => currentWorkspace;
 export function setWorkspaceId(id: string) {
   currentWorkspace = id;
   try {
-    localStorage.setItem(WORKSPACE_KEY, id);
+    localStorage.setItem(workspaceKey(), id);
   } catch {
     // Private mode or storage disabled: the choice lasts for this session only.
   }
 }
 
-const workspaceHeader = (): Record<string, string> =>
-  currentWorkspace
-    ? { "X-Organization-Id": organizationId, "X-Workspace-Id": currentWorkspace }
-    : { "X-Organization-Id": organizationId };
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (session) h.Authorization = `Bearer ${session.token}`;
+  if (currentWorkspace) h["X-Workspace-Id"] = currentWorkspace;
+  return h;
+}
 
 /** Turn a failed response into a readable message. FastAPI puts it in `detail`. */
 async function failure(res: Response): Promise<Error> {
@@ -85,13 +131,20 @@ async function failure(res: Response): Promise<Error> {
   return new Error(detail ?? `Request failed with status ${res.status}`);
 }
 
+/** A 401 means the session is over: sign out everywhere, then report the error. */
+async function failed(res: Response): Promise<Error> {
+  const error = await failure(res);
+  if (res.status === 401) endSession(error.message);
+  return error;
+}
+
 async function get<T>(path: string, fallback: T): Promise<T> {
   if (usingMockData) {
     await delay();
     return fallback;
   }
-  const res = await fetch(`${BASE}${path}`, { headers: workspaceHeader() });
-  if (!res.ok) throw await failure(res);
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw await failed(res);
   return (await res.json()) as T;
 }
 
@@ -100,11 +153,11 @@ async function send<T>(method: "POST" | "PATCH" | "DELETE", path: string, body?:
     method,
     headers:
       body instanceof FormData || body === undefined
-        ? workspaceHeader()
-        : { ...workspaceHeader(), "Content-Type": "application/json" },
+        ? authHeaders()
+        : { ...authHeaders(), "Content-Type": "application/json" },
     body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw await failure(res);
+  if (!res.ok) throw await failed(res);
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
@@ -118,8 +171,50 @@ const kindFromFilename = (name: string): SourceKind => {
 };
 
 let mockWorkspaceList = [...mockWorkspaces];
+// Placeholder mode keeps conversations in memory, so they survive navigation.
+const mockHistory = new Map<string, Message[]>();
 
 export const api = {
+  // ---- sign-in ---------------------------------------------------------------
+
+  login: async (email: string, password: string): Promise<AuthUser> => {
+    if (usingMockData) {
+      await delay(400);
+      if (!email.trim() || !password) throw new Error("Enter your email and password.");
+      const user: AuthUser = { id: "usr_mock", email: email.trim(), name: "Sinchana", organizationId: "org_default" };
+      storeSession({ token: "mock", expiresAt: new Date(Date.now() + 14 * 864e5).toISOString(), user });
+      return user;
+    }
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) throw await failure(res);
+    const next = (await res.json()) as AuthSession;
+    storeSession(next);
+    return next.user;
+  },
+
+  /** Confirms the stored session with the server. Throws if it has ended. */
+  me: async (): Promise<AuthUser> => {
+    if (!session) throw new Error("Not signed in");
+    if (usingMockData) return session.user;
+    const user = await get<AuthUser>("/api/auth/me", session.user);
+    storeSession({ ...session, user });
+    return user;
+  },
+
+  logout: async () => {
+    const token = session?.token;
+    storeSession(null);
+    if (usingMockData || !token) return;
+    // Best effort: the local session is gone whatever the server says.
+    await fetch(`${BASE}/api/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(
+      () => undefined,
+    );
+  },
+
   // ---- workspaces ------------------------------------------------------------
 
   getWorkspaces: () => get<Workspace[]>("/api/workspaces", mockWorkspaceList),
@@ -314,10 +409,19 @@ export const api = {
 
   // ---- chat ----------------------------------------------------------------
 
+  getChatHistory: async (sessionId: string): Promise<Message[]> => {
+    if (usingMockData) {
+      await delay(200);
+      return [...(mockHistory.get(sessionId) ?? [])];
+    }
+    return get<Message[]>(`/api/chat/history?session_id=${encodeURIComponent(sessionId)}`, []);
+  },
+
   ask: async (question: string, sessionId: string): Promise<Message> => {
     if (usingMockData) {
       await delay(900);
-      return {
+      const turn: Message = { id: `msg_q_${Date.now()}`, role: "customer", text: question, createdAt: new Date().toISOString() };
+      const reply: Message = {
         id: `msg_${Date.now()}`,
         role: "assistant",
         text: "Recurring invoices are generated on the schedule you set and sent to the client's registered email. If a charge did not go through, the invoice will still show as unpaid and you can send a reminder from the invoice page.\n\nI could not find anything in the indexed sources about mandate revocation or bank decline reasons, so this answer may not cover what you are asking.",
@@ -342,6 +446,8 @@ export const api = {
           },
         ],
       };
+      mockHistory.set(sessionId, [...(mockHistory.get(sessionId) ?? []), turn, reply]);
+      return reply;
     }
     return send<Message>("POST", "/api/chat", { question, session_id: sessionId });
   },

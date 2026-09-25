@@ -1,25 +1,90 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import timezone
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Workspace
+from app.models import Chunk, Conversation, Message, Source, Workspace
 from app.rag import engine
 from app.schemas import ChatRequest, CitationOut, MessageOut
 from app.workspaces import current_workspace
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+HISTORY_LIMIT = 200
 
-@router.post("/chat", response_model=MessageOut)
-def chat(payload: ChatRequest, db: Session = Depends(get_db), ws: Workspace = Depends(current_workspace)):
-    message = engine.answer(db, payload.question, payload.session_id, workspace_id=ws.id)
+
+def _citations(db: Session, message: Message) -> list[CitationOut]:
+    """The citations stored with the turn. Turns from before they were stored are
+    rebuilt from their chunk ids, for whichever chunks still exist."""
+    if message.role != "assistant":
+        return []
+    if message.citations is not None:
+        return [CitationOut(**c) for c in message.citations]
+    out = []
+    scores = message.retrieved_scores or []
+    for n, chunk_id in enumerate(message.retrieved_chunk_ids or []):
+        chunk = db.get(Chunk, chunk_id)
+        if chunk is None:
+            continue
+        source = db.get(Source, chunk.source_id)
+        out.append(
+            CitationOut(
+                chunkId=chunk.id,
+                sourceLabel=source.label if source else "unknown",
+                headingPath=chunk.heading_path,
+                similarity=round(scores[n], 4) if n < len(scores) else 0.0,
+                excerpt=chunk.text[:320],
+            )
+        )
+    return out
+
+
+def _out(db: Session, message: Message) -> MessageOut:
     return MessageOut(
         id=message.id,
         role=message.role,
         text=message.text,
-        createdAt=message.created_at,
-        confidence=message.confidence,
-        citations=[CitationOut(**c) for c in getattr(message, "citations_payload", [])],
+        # Stored without a zone on SQLite; always UTC, so say so, or browsers read it as local time.
+        createdAt=message.created_at if message.created_at.tzinfo else message.created_at.replace(tzinfo=timezone.utc),
+        confidence=message.confidence if message.role == "assistant" else None,
+        citations=_citations(db, message),
     )
+
+
+@router.post("/chat", response_model=MessageOut)
+def chat(payload: ChatRequest, db: Session = Depends(get_db), ws: Workspace = Depends(current_workspace)):
+    message = engine.answer(db, payload.question, payload.session_id, workspace_id=ws.id)
+    return _out(db, message)
+
+
+@router.get("/chat/history", response_model=list[MessageOut])
+def history(
+    session_id: str = Query(..., min_length=1, max_length=80),
+    db: Session = Depends(get_db),
+    ws: Workspace = Depends(current_workspace),
+):
+    """Every turn of one conversation in this workspace, oldest first.
+
+    Empty for a session that has not asked anything yet, rather than 404, so the
+    frontend can load history for a brand-new session without special-casing it.
+    """
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.session_id == session_id, Conversation.workspace_id == ws.id)
+        .one_or_none()
+    )
+    if conversation is None:
+        return []
+    turns = (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at.desc())
+        .limit(HISTORY_LIMIT)
+        .all()
+    )
+    # A question and its answer share a timestamp; the question comes first.
+    turns.sort(key=lambda m: (m.created_at, m.role != "customer"))
+    return [_out(db, m) for m in turns]

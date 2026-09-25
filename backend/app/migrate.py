@@ -65,6 +65,7 @@ def _add_column(table: str, column: str, ddl: str) -> None:
 
 
 def _add_columns() -> None:
+    _add_column("messages", "citations", "JSON")
     for table in WORKSPACE_TABLES:
         _add_column(table, "workspace_id", f"VARCHAR(40) NOT NULL DEFAULT '{DEFAULT_WORKSPACE_ID}'")
     for table in ORGANIZATION_TABLES:

@@ -164,3 +164,23 @@ class WorkspaceUpdate(Base):
     chunkTargetWords: int | None = None
     chunkOverlapWords: int | None = None
     crawlMaxPages: int | None = None
+
+
+# ---- sign-in ------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserOut(Base):
+    id: str
+    email: str
+    name: str
+    organizationId: str
+
+
+class SessionOut(Base):
+    token: str
+    expiresAt: datetime
+    user: UserOut

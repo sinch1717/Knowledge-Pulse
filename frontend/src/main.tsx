@@ -1,7 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { AuthProvider, RequireAuth } from "@/components/auth";
 import { Shell } from "@/components/Shell";
+import { LoginPage } from "@/pages/LoginPage";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { InsightsPage } from "@/pages/InsightsPage";
 import { InsightDetailPage } from "@/pages/InsightDetailPage";
@@ -12,19 +14,32 @@ import { EvaluationPage } from "@/pages/EvaluationPage";
 import { ResearchPage } from "@/pages/ResearchPage";
 import "./index.css";
 
+// Everything except /login sits behind RequireAuth.
 const router = createBrowserRouter([
   {
-    path: "/",
-    element: <Shell />,
+    element: <AuthProvider />,
     children: [
-      { index: true, element: <OverviewPage /> },
-      { path: "insights", element: <InsightsPage /> },
-      { path: "insights/:id", element: <InsightDetailPage /> },
-      { path: "report", element: <ReportPage /> },
-      { path: "ask", element: <AskPage /> },
-      { path: "sources", element: <SourcesPage /> },
-      { path: "evaluation", element: <EvaluationPage /> },
-      { path: "research", element: <ResearchPage /> },
+      { path: "/login", element: <LoginPage /> },
+      {
+        element: <RequireAuth />,
+        children: [
+          {
+            path: "/",
+            element: <Shell />,
+            children: [
+              { index: true, element: <OverviewPage /> },
+              { path: "insights", element: <InsightsPage /> },
+              { path: "insights/:id", element: <InsightDetailPage /> },
+              { path: "report", element: <ReportPage /> },
+              { path: "ask", element: <AskPage /> },
+              { path: "sources", element: <SourcesPage /> },
+              { path: "evaluation", element: <EvaluationPage /> },
+              { path: "research", element: <ResearchPage /> },
+            ],
+          },
+        ],
+      },
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
 ]);

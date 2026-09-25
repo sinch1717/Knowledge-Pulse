@@ -278,25 +278,41 @@ def main() -> None:
     assert final.organization_id == org and all(r.organization_id == org for r in final.recommendations), \
         "report rows were not stamped with the organisation"
 
-    # ---- 6. tenancy over HTTP -------------------------------------------
-    log.info("6/6  Checking the X-Organization-Id boundary over HTTP")
+    # ---- 6. sign-in and tenancy over HTTP ----------------------------------
+    log.info("6/6  Checking sign-in and the organisation boundary over HTTP")
     from fastapi.testclient import TestClient
 
+    from app.auth import create_or_update_user
     from app.main import app
 
-    client = TestClient(app)
-    assert client.get("/api/health").status_code == 200, "health must stay public"
-    assert client.get("/api/sources").status_code == 400, "a request without an organisation must fail"
-    mine = client.get("/api/sources", headers={"X-Organization-Id": org}).json()
-    assert [s["id"] for s in mine] == ["src_smoke"], "the default organisation lost its source"
-    other = {"X-Organization-Id": "org_smoke_other"}
-    assert client.get("/api/sources", headers=other).json() == [], "another organisation saw our source"
-    assert client.get("/api/insights", headers=other).json() == [], "another organisation saw our insights"
-    hop = {**other, "X-Workspace-Id": DEFAULT_WORKSPACE_ID}
-    assert client.get("/api/sources", headers=hop).status_code == 404, "workspace hopping across organisations"
-    reply = client.post("/api/chat", headers=other, json={"question": "can i edit an invoice", "session_id": "s1"})
-    assert reply.status_code == 200 and reply.json()["citations"] == [], "chat retrieved another tenant's chunks"
-    log.info("     header required, data and chunks invisible across organisations")
+    create_or_update_user(db, "smoke@smoke.test", "smoke-password", "Smoke", org)
+    create_or_update_user(db, "other@smoke.test", "other-password", "Other", "org_smoke_other")
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200, "health must stay public"
+        assert client.get("/api/sources").status_code == 401, "a request without a session must fail"
+        assert client.get("/api/sources", headers={"X-Organization-Id": org}).status_code == 401, \
+            "the organisation header alone must not be trusted"
+
+        def sign_in(email, password):
+            resp = client.post("/api/auth/login", json={"email": email, "password": password})
+            assert resp.status_code == 200, f"sign-in failed for {email}"
+            return {"Authorization": f"Bearer {resp.json()['token']}"}
+
+        mine = sign_in("smoke@smoke.test", "smoke-password")
+        assert [s["id"] for s in client.get("/api/sources", headers=mine).json()] == ["src_smoke"], \
+            "a user of the default organisation does not see its source"
+        other = sign_in("other@smoke.test", "other-password")
+        assert client.get("/api/sources", headers=other).json() == [], "another organisation saw our source"
+        assert client.get("/api/insights", headers=other).json() == [], "another organisation saw our insights"
+        hop = {**other, "X-Workspace-Id": DEFAULT_WORKSPACE_ID}
+        assert client.get("/api/sources", headers=hop).status_code == 404, "workspace hopping across organisations"
+        reply = client.post("/api/chat", headers=other, json={"question": "can i edit an invoice", "session_id": "s1"})
+        assert reply.status_code == 200 and reply.json()["citations"] == [], "chat retrieved another tenant's chunks"
+        history = client.get("/api/chat/history?session_id=s1", headers=other).json()
+        assert [m["role"] for m in history] == ["customer", "assistant"], "conversation history not returned"
+        client.post("/api/auth/logout", headers=other)
+        assert client.get("/api/sources", headers=other).status_code == 401, "signing out did not end the session"
+    log.info("     sign-in required, data and chunks invisible across organisations")
 
     db.close()
     log.info("")

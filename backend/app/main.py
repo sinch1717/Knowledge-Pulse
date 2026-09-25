@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.migrate import upgrade
-from app.routers import chat, insights, research, sources, workspaces
+from app.routers import auth, chat, insights, research, sources, workspaces
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +33,17 @@ def _backfill_vectors() -> None:
     vector_store.backfill_tenancy(default_workspace_id, owners, settings.default_organization_id)
 
 
+def _ensure_demo_user() -> None:
+    from app.auth import ensure_demo_user
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        ensure_demo_user(db)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     upgrade()
@@ -41,6 +52,7 @@ async def lifespan(_: FastAPI):
         _backfill_vectors()
     except Exception as exc:  # noqa: BLE001 - the API should still start
         log.warning("Could not tag existing chunks with a workspace: %s", exc)
+    _ensure_demo_user()
     log.info("Language model provider: %s", settings.llm_provider)
     yield
 
@@ -64,6 +76,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(sources.router)
 app.include_router(chat.router)
@@ -71,7 +84,7 @@ app.include_router(insights.router)
 app.include_router(research.router)
 
 
-# Public, no X-Organization-Id: infrastructure checks only, no tenant data.
+# Public, no sign-in: infrastructure checks only, no tenant data.
 @app.get("/api/health")
 def health():
     from app import vector_store

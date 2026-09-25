@@ -4,7 +4,8 @@
 
 Covers:
  1. /api/health and /api/research stay public.
- 2. Every tenant route rejects a missing, blank or malformed X-Organization-Id with 400.
+ 2. Every tenant route rejects a request with no session and no internal key (401), and,
+    on the internal path, a missing, blank or malformed X-Organization-Id (400).
  3. A new organisation gets its own default workspace; workspace lists are per organisation.
  4. Another organisation's workspace id is a 404 (no workspace hopping), for reads,
     PATCH and DELETE; an organisation cannot delete its own default workspace.
@@ -33,6 +34,8 @@ os.environ["CHROMA_PATH"] = f"{_test_dir}/chroma"
 os.environ["HDBSCAN_MIN_CLUSTER_SIZE"] = "2"
 os.environ["UMAP_NEIGHBOURS"] = "2"
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
+# These tests name organisations directly, as a trusted server-to-server caller.
+os.environ["INTERNAL_API_KEY"] = "test-internal-key"
 
 from app.config import get_settings  # noqa: E402
 
@@ -65,8 +68,9 @@ from app.tenant import default_workspace_id, ensure_default_workspace  # noqa: E
 
 ORG_A = "org_test_alpha"
 ORG_B = "org_test_beta"
-A = {"X-Organization-Id": ORG_A}
-B = {"X-Organization-Id": ORG_B}
+KEY = {"X-Internal-Key": "test-internal-key"}
+A = {**KEY, "X-Organization-Id": ORG_A}
+B = {**KEY, "X-Organization-Id": ORG_B}
 
 
 def fake_embed(texts: list[str], batch_size: int = 32) -> np.ndarray:
@@ -136,20 +140,26 @@ class MultiTenancyTests(unittest.TestCase):
             ("GET", "/api/evaluation/latest"),
         ]
         for method, route in routes:
-            resp = self.client.request(method, route, json={} if method == "POST" else None)
+            body = {} if method == "POST" else None
+            resp = self.client.request(method, route, json=body)
+            self.assertEqual(resp.status_code, 401, f"{method} {route}")
+            # The header alone is not trusted: it needs the internal key.
+            resp = self.client.request(method, route, json=body, headers={"X-Organization-Id": ORG_A})
+            self.assertEqual(resp.status_code, 401, f"{method} {route}")
+            resp = self.client.request(method, route, json=body, headers=KEY)
             self.assertEqual(resp.status_code, 400, f"{method} {route}")
             self.assertIn("X-Organization-Id header is required", resp.json()["detail"])
 
-        resp = self.client.get("/api/sources", headers={"X-Organization-Id": "   "})
+        resp = self.client.get("/api/sources", headers={**KEY, "X-Organization-Id": "   "})
         self.assertEqual(resp.status_code, 400)
-        resp = self.client.get("/api/sources", headers={"X-Organization-Id": "bad org!@#"})
+        resp = self.client.get("/api/sources", headers={**KEY, "X-Organization-Id": "bad org!@#"})
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Invalid X-Organization-Id", resp.json()["detail"])
 
     # ---- 3-4. workspaces ------------------------------------------------
 
     def test_03_default_workspace_per_organisation(self):
-        fresh = {"X-Organization-Id": "org_test_fresh"}
+        fresh = {**KEY, "X-Organization-Id": "org_test_fresh"}
         listed = self.client.get("/api/workspaces", headers=fresh).json()
         self.assertEqual(len(listed), 1)
         self.assertTrue(listed[0]["isDefault"])

@@ -2,22 +2,30 @@
 
 Two levels, one inside the other.
 
-| Level | Header | Required | What it isolates |
+| Level | Decided by | Required | What it isolates |
 |---|---|---|---|
-| Organisation | `X-Organization-Id` | Yes, on every business route | Everything. The tenant. |
+| Organisation | The signed-in user's account (see `docs/AUTH.md`) | Yes, on every business route | Everything. The tenant. |
 | Workspace | `X-Workspace-Id` | No | A profile inside one organisation: its own sources, chat archive, topics, reports, evaluation runs and chunk settings |
 
-One user is one organisation for now. Several users per organisation is a later milestone.
+Each user belongs to one organisation. Several users can share an organisation
+(create them with `scripts/create_user.py --organization-id`).
 
-## The organisation header
+## How the organisation is decided
 
-- Format: 1 to 64 characters of `a-z A-Z 0-9 _ -`.
-- Missing or blank: `400 "X-Organization-Id header is required."`
-- Malformed: `400 "Invalid X-Organization-Id header format. ..."`
-- HTTP requests never fall back to a default organisation.
-- Public, no header: `GET /api/health`, `GET /api/research/latest` (the project's own chunking experiment, not tenant data).
+`app/tenant.py:get_organization_id`, in this order:
 
-There is no organisations table. An organisation exists as soon as a request names it.
+1. `Authorization: Bearer <token>` from `/api/auth/login`: the session's user's organisation. If the
+   request also sends `X-Organization-Id` and it is a different organisation: 403.
+2. Otherwise `X-Organization-Id` is accepted only with a correct `X-Internal-Key` (`INTERNAL_API_KEY`).
+   That is the server-to-server path. The header is then validated: 1-64 of `a-z A-Z 0-9 _ -`,
+   400 if missing or malformed.
+3. Otherwise 401 "Sign in to continue."
+
+The browser never sends `X-Organization-Id`; it is an internal backend concern.
+Public routes: `GET /api/health`, `GET /api/research/latest` (the project's own chunking experiment,
+not tenant data), and sign-in itself.
+
+There is no organisations table. An organisation exists as soon as a user belongs to it.
 
 ## Workspaces inside an organisation
 
@@ -69,13 +77,13 @@ All take `--organization-id` and `--workspace`:
 
 ## Next.js integration
 
-The Next.js app derives `organization_id` from the signed-in user and sends `X-Organization-Id` on every
-server-to-server call to FastAPI. Authentication stays in Next.js.
+Two options, both supported:
 
-The header is only as trustworthy as whoever sets it. Until Next.js sits in front, the Vite frontend
-sets it from `VITE_ORGANIZATION_ID` in the browser, which anyone can change: that gives separation of
-data, not security. Once Next.js is in front, FastAPI should accept calls only from it (a private network,
-or a shared secret header checked in `get_organization_id`).
+- The Next.js frontend signs users in through `/api/auth/login` and sends the bearer token, exactly as
+  the Vite frontend does.
+- A Next.js server that authenticates users itself (for example against MongoDB) calls FastAPI
+  server-to-server with `X-Internal-Key` and `X-Organization-Id`. Keep `INTERNAL_API_KEY` secret and
+  out of the browser; anyone holding it can act for any organisation.
 
 ## Tests
 

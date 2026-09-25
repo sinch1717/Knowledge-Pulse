@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, usingMockData } from "@/lib/api";
-import type { Message } from "@/lib/types";
-import { PageContainer, PageHeader, Panel } from "@/components/ui";
+import { MessageSquarePlus } from "lucide-react";
+import { usingMockData } from "@/lib/api";
+import { Button, PageContainer, PageHeader, Panel } from "@/components/ui";
 import {
   AssistantMessageBubble,
   ChatComposer,
@@ -10,8 +10,7 @@ import {
   ChatLoadingBubble,
   UserMessageBubble,
 } from "@/components/ask/chat";
-
-const sessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
+import { useConversation } from "@/components/ask/conversation";
 
 // The placeholder data describes an invoicing product; the live demo indexes
 // the Plausible Analytics docs. Examples follow whichever is on screen.
@@ -28,54 +27,56 @@ const examples = usingMockData
     ];
 
 export function AskPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  // The conversation lives above the routes (see conversation.tsx), so it is
+  // still here after visiting another page, and reloads from the server.
+  const { messages, loading, pending, failed, historyError, send, retry, reload, startNew } = useConversation();
   const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState<{ question: string; error: string } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Only once there is a conversation: scrolling the empty state would hide its heading.
+    if (messages.length === 0 && !pending) return;
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending, failed]);
 
-  async function ask(question: string, addTurn: boolean) {
-    if (addTurn) {
-      setMessages((m) => [
-        ...m,
-        { id: `local_${Date.now()}`, role: "customer", text: question, createdAt: new Date().toISOString() },
-      ]);
-    }
-    setFailed(null);
-    setPending(true);
-    try {
-      const reply = await api.ask(question, sessionId);
-      setMessages((m) => [...m, reply]);
-    } catch (e) {
-      setFailed({ question, error: (e as Error).message });
-    } finally {
-      setPending(false);
-    }
+  function submit(text: string) {
+    if (!text.trim() || pending || loading) return;
+    setDraft("");
+    send(text);
   }
 
-  function send(text: string) {
-    const question = text.trim();
-    if (!question || pending) return;
-    setDraft("");
-    void ask(question, true);
-  }
+  const empty = messages.length === 0 && !pending && !loading && !historyError;
 
   return (
     <PageContainer narrow>
       <PageHeader centered title="Ask KnowledgePulse" description="Ask a question about your connected knowledge." />
 
       <Panel className="flex h-[calc(100vh-20rem)] min-h-[26rem] flex-col">
-        <div className="border-b border-rule px-5 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-rule px-5 py-2.5">
           <p className="text-small font-medium">Assistant</p>
+          <Button
+            variant="quiet"
+            onClick={() => {
+              setDraft("");
+              startNew();
+            }}
+            disabled={pending || (messages.length === 0 && !failed)}
+            className="px-3 py-1.5"
+          >
+            <MessageSquarePlus size={14} aria-hidden />
+            New conversation
+          </Button>
         </div>
 
         <div ref={scroller} className="flex-1 overflow-y-auto px-5 py-6" aria-live="polite">
-          {messages.length === 0 && !pending ? (
-            <ChatEmptyState examples={examples} onPick={send} />
+          {loading ? (
+            <p role="status" className="py-10 text-center text-small text-ink-faint">
+              Loading this conversation
+            </p>
+          ) : historyError ? (
+            <ChatError message={`Could not load this conversation. ${historyError}`} onRetry={reload} />
+          ) : empty ? (
+            <ChatEmptyState examples={examples} onPick={submit} />
           ) : (
             <div className="space-y-6">
               {messages.map((m) =>
@@ -86,15 +87,16 @@ export function AskPage() {
                 ),
               )}
               {pending && <ChatLoadingBubble />}
-              {failed && <ChatError message={failed.error} onRetry={() => ask(failed.question, false)} />}
+              {failed && <ChatError message={failed.error} onRetry={retry} />}
             </div>
           )}
         </div>
 
         <div className="border-t border-rule p-3">
-          <ChatComposer value={draft} onChange={setDraft} onSend={() => send(draft)} disabled={pending} />
+          <ChatComposer value={draft} onChange={setDraft} onSend={() => submit(draft)} disabled={pending || loading} />
           <p className="mt-2 px-1 text-micro text-ink-faint">
-            Enter to send, Shift and Enter for a new line. Every question is logged for the period's analytics.
+            Enter to send, Shift and Enter for a new line. Every question is logged for the period's analytics, and
+            the conversation stays here until you start a new one.
           </p>
         </div>
       </Panel>

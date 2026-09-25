@@ -1,0 +1,42 @@
+"""Functional and non-functional requirements, from sections 6.3 and 6.4 of the
+project report, shortened. Acceptance tests tag themselves with these ids; the
+traceability report is built from this list, so a requirement with no test shows
+up as NOT COVERED rather than silently disappearing."""
+
+REQUIREMENTS = {
+    "FR1": "Accept a website URL or an uploaded PDF, DOCX or text file as a source and register it",
+    "FR2": "Crawl a website across internal links; strip navigation and boilerplate",
+    "FR3": "Structure-aware chunks with configurable overlap; store each chunk's heading path",
+    "FR4": "Embed each chunk and upsert it with source metadata into the vector store",
+    "FR5": "Re-index a source when its content changes or on a scheduled refresh",
+    "FR6": "Answer a natural-language question grounded in retrieved chunks",
+    "FR7": "Return the identifiers and locations of the passages used with every answer",
+    "FR8": "Compute retrieval confidence from the top-k similarity distribution and persist it",
+    "FR9": "Persist every turn with session, role, text, confidence and retrieved chunk ids",
+    "FR10": "Run a scheduled analytics batch over a configurable reporting period",
+    "FR11": "Cluster a batch's queries into topics; unrelated queries go to noise",
+    "FR12": "Label each topic with representative keywords and a generated name",
+    "FR13": "Compare topics across periods; classify recurring, emerging or stable with direction and rate",
+    "FR14": "Priority score from volume, growth, confidence deficit and severity; one ranked list",
+    "FR15": "Periodic report with recommendations in four categories",
+    "FR16": "Expose the supporting questions and passages for every insight and recommendation",
+    "FR17": "Administrative interface for sources, topics and trends, and reports",
+    "FR18": "Evaluate on a held-out set: faithfulness, answer relevance, context relevance",
+    "NFR1": "Performance: chat within a few seconds; batch well within its interval",
+    "NFR2": "Scalability: growth without schema change; batch re-runnable over a larger window",
+    "NFR3": "Reliability: generation API failure degrades to passages; logging and analytics continue",
+    "NFR4": "Accuracy: faithfulness of at least 0.80 on the held-out set",
+    "NFR5": "Explainability: every answer, ranked gap and score traceable to chunks or conversations",
+    "NFR6": "Security and privacy: pseudonymous sessions, credentials out of source control, PII redactable",
+    "NFR7": "Usability: report readable without model or retrieval terminology",
+    "NFR8": "Maintainability: independent modules; retrieval implemented directly, no orchestration framework",
+    "NFR9": "Portability: runs through Docker Compose on Linux and Windows with WSL2",
+    "NFR10": "Cost: embedding and clustering local; external API only for generation and summaries",
+    "MT1": "Multi-tenancy: the organisation comes from the signed-in session, never from the browser",
+    "MT2": "Multi-tenancy: no data, chunk or workspace is visible across organisations",
+    "AUTH1": "Sign-in with email and password; wrong credentials are refused without revealing which was wrong",
+    "AUTH2": "A session persists across page loads until it expires or the user signs out",
+    "AUTH3": "Signing out ends the session immediately, server-side",
+    "AUTH4": "Every business route requires a session (or the internal server-to-server key)",
+    "CHAT1": "A conversation persists: it reloads intact after navigation, a page reload, or a reindex",
+}

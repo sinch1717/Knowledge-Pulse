@@ -152,6 +152,17 @@ def answer(
                 "from the sources:\n\n" + "\n\n".join(h["text"][:400] for h in hits[:2])
             )
 
+    citations = [
+        {
+            "chunkId": h["chunk_id"],
+            "sourceLabel": h["meta"].get("source_label", "unknown"),
+            "headingPath": h["meta"].get("heading_path", ""),
+            "similarity": round(h["similarity"], 4),
+            "excerpt": h["text"][:320],
+        }
+        for h in hits
+    ]
+
     assistant = Message(
         id=new_id("msg"),
         organization_id=organization_id,
@@ -162,22 +173,12 @@ def answer(
         confidence=confidence,
         retrieved_chunk_ids=[h["chunk_id"] for h in hits],
         retrieved_scores=similarities,
+        citations=citations,
         created_at=created_at,
         period=period,
     )
     db.add(assistant)
     db.commit()
-
-    assistant.citations_payload = [  # type: ignore[attr-defined]
-        {
-            "chunkId": h["chunk_id"],
-            "sourceLabel": h["meta"].get("source_label", "unknown"),
-            "headingPath": h["meta"].get("heading_path", ""),
-            "similarity": round(h["similarity"], 4),
-            "excerpt": h["text"][:320],
-        }
-        for h in hits
-    ]
     return assistant
 
 

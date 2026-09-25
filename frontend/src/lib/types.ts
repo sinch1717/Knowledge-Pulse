@@ -236,3 +236,18 @@ export interface ResearchSummary {
   comparisons: ResearchComparison[];
   transfer: ResearchTransfer[];
 }
+
+/** The signed-in user. The organisation is fixed by the account, not chosen in the browser. */
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  organizationId: string;
+}
+
+/** What /api/auth/login returns; kept in localStorage until it expires or the user signs out. */
+export interface AuthSession {
+  token: string;
+  expiresAt: string;
+  user: AuthUser;
+}

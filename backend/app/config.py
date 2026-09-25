@@ -21,8 +21,23 @@ class Settings(BaseSettings):
     # --- Multi-tenancy -----------------------------------------------------
     # The organisation that owns everything created before tenancy existed, and
     # the one scripts use when no --organization-id is given. HTTP requests never
-    # fall back to it: they must send X-Organization-Id. See docs/TENANCY.md.
+    # fall back to it: the organisation comes from the signed-in user's session.
+    # See docs/TENANCY.md and docs/AUTH.md.
     default_organization_id: str = "org_default"
+
+    # --- Sign-in -------------------------------------------------------------
+    # How long a session lasts after sign-in.
+    session_ttl_hours: int = 336  # 14 days
+    # A demo account created (or its password reset) on every start, belonging to
+    # the default organisation. Leave the password empty to create no demo user.
+    # Change the password for any deployment anyone else can reach.
+    demo_user_email: str = "demo@knowledgepulse.local"
+    demo_user_password: str = "knowledgepulse"
+    demo_user_name: str = "Sinchana"
+    # Server-to-server callers (a Next.js backend, test harnesses) may name the
+    # organisation with X-Organization-Id instead of a session, but only when they
+    # also send this key as X-Internal-Key. Empty disables that path entirely.
+    internal_api_key: str = ""
 
     # --- Language model --------------------------------------------------
     # "groq" for development, "gemini" for the demo. One interface, two adapters.

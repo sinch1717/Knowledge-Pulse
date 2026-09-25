@@ -1,3 +1,35 @@
+# Changes in this round: sign-in and persistent conversations
+
+## New
+- **Sign-in.** Accounts and sessions (`users`, `auth_sessions`), `/api/auth/login`,
+  `/api/auth/me`, `/api/auth/logout`. Demo account in `org_default` created on
+  start from `DEMO_USER_*` settings. `scripts/create_user.py` for more. No new
+  dependencies. See `docs/AUTH.md`.
+- **Conversation history.** `GET /api/chat/history?session_id=...` returns a
+  conversation's turns. Answers now store their citations (`messages.citations`,
+  added by the start-up migration), so they reload intact even after a reindex.
+- **Frontend:** a sign-in page, protected routes, a session kept across reloads,
+  and an account menu with the user, workspace switching and Sign out.
+- **Ask page:** the conversation survives moving between pages and reloads, is
+  kept per workspace, and has a New conversation button.
+- **Tests:** `test_auth.py`, conversation-history tests, acceptance for AUTH1-4
+  and CHAT1, and a browser test (`tests/e2e/run_e2e.py`, optional, Playwright).
+
+## Changed
+- The organisation now comes from the signed-in account. `X-Organization-Id` is
+  internal: accepted only with `X-Internal-Key` (`INTERNAL_API_KEY`), for a
+  trusted server. Without a session every business route answers 401.
+- `VITE_ORGANIZATION_ID` and `VITE_ACCOUNT_NAME` are gone from the frontend.
+- Chat timestamps are marked as UTC, so browsers no longer read them as local time.
+- curl examples in the README and SETUP now sign in first.
+
+## Fixed
+- Questions vanished when leaving the Ask page, and a reload started a new
+  conversation: the conversation lived in the page's own state and the session id
+  was regenerated on every load.
+
+---
+
 # Changes in this round: multi-tenancy
 
 Merges the organisation-level tenancy from the multitenancy branch into

@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import clsx from "clsx";
-import { Check, ChevronDown, Plus, Settings } from "lucide-react";
+import { Check, ChevronDown, LogOut, Plus, Settings } from "lucide-react";
 import { usingMockData } from "@/lib/api";
+import { useAuth } from "@/components/auth";
 import { useWorkspace } from "@/components/workspace";
-
-const accountName = import.meta.env.VITE_ACCOUNT_NAME || "Sinchana";
 
 export const features = [
   { to: "/", label: "This period", end: true },
@@ -180,39 +179,110 @@ export function PrimaryNavbar() {
           </Menu>
           </div>
 
-          <Menu
-            label={
-              <span className="inline-flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className="grid h-6 w-6 place-items-center rounded-full bg-oxblood text-micro font-semibold text-paper-raised"
-                >
-                  {accountName.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="hidden sm:inline">{accountName}</span>
-              </span>
-            }
-          >
-            {(close) => (
-              <>
-                <div className="border-b border-rule px-4 pb-3 pt-1">
-                  <p className="text-small font-medium text-ink">{accountName}</p>
-                  <p className="text-micro text-ink-faint">
-                    {usingMockData ? "Viewing placeholder data" : "Connected to the KnowledgePulse API"}
-                  </p>
-                </div>
-                <Link to="/sources" role="menuitem" onClick={close} className="block px-4 py-2 text-small hover:bg-paper">
-                  Manage sources
-                </Link>
-                <Link to="/evaluation" role="menuitem" onClick={close} className="block px-4 py-2 text-small hover:bg-paper">
-                  Assistant quality
-                </Link>
-              </>
-            )}
-          </Menu>
+          <AccountMenu />
         </div>
       </div>
     </div>
+  );
+}
+
+/** Who is signed in, workspace switching, and sign-out. */
+function AccountMenu() {
+  const { user, logout } = useAuth();
+  const { workspaces, current, select, openCreate, openSettings } = useWorkspace();
+  const navigate = useNavigate();
+  const name = user?.name || user?.email || "Account";
+
+  return (
+    <Menu
+      label={
+        <span className="inline-flex items-center gap-2">
+          <span
+            aria-hidden
+            className="grid h-6 w-6 place-items-center rounded-full bg-oxblood text-micro font-semibold text-paper-raised"
+          >
+            {name.slice(0, 1).toUpperCase()}
+          </span>
+          <span className="hidden max-w-[10rem] truncate sm:inline">{name}</span>
+        </span>
+      }
+    >
+      {(close) => (
+        <>
+          <div className="border-b border-rule px-4 pb-3 pt-1">
+            <p className="truncate text-small font-medium text-ink">{name}</p>
+            {user?.email && user.email !== name && <p className="truncate text-micro text-ink-soft">{user.email}</p>}
+            <p className="text-micro text-ink-faint">
+              {usingMockData ? "Viewing placeholder data" : "Connected to the KnowledgePulse API"}
+            </p>
+          </div>
+
+          <div className="border-b border-rule py-1">
+            <p className="px-4 pb-1 pt-1 text-micro text-ink-faint">Workspace</p>
+            <div className="max-h-56 overflow-y-auto">
+              {workspaces.map((w) => (
+                <button
+                  key={w.id}
+                  role="menuitemradio"
+                  aria-checked={w.id === current?.id}
+                  onClick={() => {
+                    select(w.id);
+                    close();
+                  }}
+                  className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-small hover:bg-paper"
+                >
+                  <Check size={14} className={clsx("shrink-0", w.id === current?.id ? "text-oxblood" : "invisible")} aria-hidden />
+                  <span className="truncate">{w.name}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              role="menuitem"
+              onClick={() => {
+                close();
+                openCreate();
+              }}
+              className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-small hover:bg-paper"
+            >
+              <Plus size={14} aria-hidden />
+              New workspace
+            </button>
+            <button
+              role="menuitem"
+              onClick={() => {
+                close();
+                openSettings();
+              }}
+              className="flex w-full items-center gap-2 px-4 py-1.5 text-left text-small hover:bg-paper"
+            >
+              <Settings size={14} aria-hidden />
+              Workspace settings
+            </button>
+          </div>
+
+          <Link to="/sources" role="menuitem" onClick={close} className="block px-4 py-2 text-small hover:bg-paper">
+            Manage sources
+          </Link>
+          <Link to="/evaluation" role="menuitem" onClick={close} className="block px-4 py-2 text-small hover:bg-paper">
+            Assistant quality
+          </Link>
+          <div className="mt-1 border-t border-rule pt-1">
+            <button
+              role="menuitem"
+              onClick={async () => {
+                close();
+                await logout();
+                navigate("/login", { replace: true });
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2 text-left text-small text-oxblood hover:bg-paper"
+            >
+              <LogOut size={14} aria-hidden />
+              Sign out
+            </button>
+          </div>
+        </>
+      )}
+    </Menu>
   );
 }
 

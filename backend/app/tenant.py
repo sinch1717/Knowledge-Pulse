@@ -2,10 +2,19 @@
 
 Two levels of isolation:
 
-    organisation  - the tenant. Identified by the X-Organization-Id header, which
-                    the Next.js app sets from the signed-in user. Required on every
-                    business route; never defaulted for HTTP.
+    organisation  - the tenant. Taken from the signed-in user's session. Never
+                    chosen by the browser and never defaulted for HTTP.
     workspace     - a profile inside one organisation (X-Workspace-Id, optional).
+
+How a request's organisation is decided (get_organization_id):
+
+    1. "Authorization: Bearer <token>": the session's user's organisation. If the
+       request also names an organisation in X-Organization-Id and it is not that
+       one, 403. This is how the browser app works.
+    2. Otherwise, X-Organization-Id is accepted only together with a correct
+       X-Internal-Key (settings.internal_api_key). This is the server-to-server path,
+       for a trusted backend such as a Next.js server or a test harness.
+    3. Otherwise, 401.
 
 The organisation is checked once, where the workspace is resolved
 (app.workspaces.current_workspace). Every query below that is scoped to a
@@ -21,31 +30,23 @@ original "ws_default", which is where all pre-tenancy data lives.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import bearer_token, require_session
 from app.config import settings
+from app.db import get_db
 from app.models import DEFAULT_WORKSPACE_ID, Workspace
 
 ORG_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
-def get_organization_id(
-    x_organization_id: str | None = Header(
-        None,
-        alias="X-Organization-Id",
-        description="Tenant identifier for organisation-scoped data isolation.",
-    ),
-) -> str:
-    """Validate and return the X-Organization-Id header.
-
-    Missing, blank or malformed headers are rejected with 400. There is no
-    fallback to the default organisation for HTTP requests.
-    """
-    org_id = (x_organization_id or "").strip()
+def _validated(org_id: str | None) -> str:
+    org_id = (org_id or "").strip()
     if not org_id:
         raise HTTPException(status_code=400, detail="X-Organization-Id header is required.")
     if not ORG_ID_REGEX.match(org_id):
@@ -57,6 +58,31 @@ def get_organization_id(
             ),
         )
     return org_id
+
+
+def get_organization_id(
+    token: str | None = Depends(bearer_token),
+    x_organization_id: str | None = Header(
+        None,
+        alias="X-Organization-Id",
+        description="Server-to-server only, with X-Internal-Key. Browsers sign in instead.",
+    ),
+    x_internal_key: str | None = Header(None, alias="X-Internal-Key"),
+    db: Session = Depends(get_db),
+) -> str:
+    """The organisation this request acts for. See the module docstring for the rules."""
+    if token:
+        org_id = require_session(db, token).user.organization_id
+        requested = (x_organization_id or "").strip()
+        if requested and requested != org_id:
+            raise HTTPException(403, "This account does not belong to that organisation.")
+        return org_id
+
+    key = settings.internal_api_key
+    if key and x_internal_key and hmac.compare_digest(x_internal_key, key):
+        return _validated(x_organization_id)
+
+    raise HTTPException(401, "Sign in to continue.", headers={"WWW-Authenticate": "Bearer"})
 
 
 def default_workspace_id(organization_id: str) -> str:

@@ -54,16 +54,22 @@ Then, in order:
 **1. Index a source.** Either through the frontend's Sources screen, or:
 
 ```bash
+# sign in (the demo account is created on start; see DEMO_USER_* in .env)
+TOKEN=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"demo@knowledgepulse.local","password":"knowledgepulse"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+
 curl -X POST localhost:8000/api/sources \
   -H 'Content-Type: application/json' \
-  -H 'X-Organization-Id: org_default' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"kind":"website","location":"https://docs.example.com"}'
 ```
 
-Every route except `/api/health` and `/api/research/latest` needs the
-`X-Organization-Id` header, and rejects a request without it with 400. Add
-`X-Workspace-Id` to target a workspace other than the organisation's default.
-The scripts take `--organization-id` and `--workspace`. See `docs/TENANCY.md`.
+Every route except `/api/health`, `/api/research/latest` and sign-in needs a
+session: `Authorization: Bearer <token>` from `/api/auth/login`. The organisation
+comes from the signed-in account. Add `X-Workspace-Id` to target a workspace
+other than the organisation's default. The scripts work on the database directly
+and take `--organization-id` and `--workspace`. See `docs/AUTH.md` and
+`docs/TENANCY.md`.
 
 Crawling runs in the background. Watch `GET /api/sources` until status reads
 `ready`. A hundred pages takes two or three minutes, most of it the polite delay

@@ -64,9 +64,11 @@ Getting from an empty database to a populated dashboard is four commands, in thi
 
 ```bash
 # 1. index a documentation site (or use the frontend's Sources screen)
-# every API call needs X-Organization-Id; org_default holds the existing data
+# every API call needs a session; the demo account belongs to org_default
+TOKEN=$(curl -s -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"demo@knowledgepulse.local","password":"knowledgepulse"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 curl -X POST localhost:8000/api/sources -H 'Content-Type: application/json' \
-  -H 'X-Organization-Id: org_default' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"kind":"website","location":"https://plausible.io/docs"}'
 
 # 2. generate and replay a conversation archive across three periods
